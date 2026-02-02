@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Qwen TTS</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="header__left">
+          <div class="title">Qwen TTS</div>
+          <div class="meta">
+            <span class="status" id="statusDot" aria-label="Server status" title="Server status"></span>
+            <span class="meta__item" id="statusText">Offline</span>
+            <span class="meta__sep">•</span>
+            <span class="meta__item">Latency: <span id="latency">—</span></span>
+            <span class="meta__sep">•</span>
+            <span class="meta__item">Voices: <span id="voiceCount">—</span></span>
+          </div>
+        </div>
+        <div class="header__right">
+          <button class="btn" id="refreshBtn" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card" aria-labelledby="previewTitle">
+          <div class="card__header">
+            <h2 class="card__title" id="previewTitle">Quick Preview</h2>
+          </div>
+          <div class="card__body">
+            <label class="field">
+              <div class="field__label">Voice</div>
+              <select class="select" id="voiceSelect"></select>
+            </label>
+
+            <label class="field">
+              <div class="field__label">Text</div>
+              <textarea class="textarea" id="previewText" rows="4" placeholder="Type something to preview..."></textarea>
+            </label>
+
+            <div class="row">
+              <button class="btn btn--primary" id="generateBtn" type="button">Generate</button>
+              <button class="btn" id="playBtn" type="button" disabled>Play</button>
+              <audio id="audio" preload="none"></audio>
+            </div>
+
+            <div class="hint" id="previewHint">Generate creates a short audio preview using the remote server.</div>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="snapshotTitle">
+          <div class="card__header">
+            <h2 class="card__title" id="snapshotTitle">Server Snapshot</h2>
+          </div>
+          <div class="card__body">
+            <div class="metric">
+              <div class="metric__top">
+                <div class="metric__label">CPU</div>
+                <div class="metric__value" id="cpuValue">—</div>
+              </div>
+              <div class="bar"><div class="bar__fill" id="cpuBar"></div></div>
+            </div>
+
+            <div class="metric">
+              <div class="metric__top">
+                <div class="metric__label">RAM</div>
+                <div class="metric__value" id="ramValue">—</div>
+              </div>
+              <div class="bar"><div class="bar__fill" id="ramBar"></div></div>
+            </div>
+
+            <div class="metric metric--single">
+              <div class="metric__top">
+                <div class="metric__label">Queue Size</div>
+                <div class="metric__value" id="queueValue">—</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card grid__full" aria-labelledby="voicesTitle">
+          <div class="card__header">
+            <h2 class="card__title" id="voicesTitle">Voices</h2>
+          </div>
+          <div class="card__body">
+            <div class="list" id="voicesList" role="list"></div>
+          </div>
+        </section>
+
+        <section class="card grid__full" aria-labelledby="settingsTitle">
+          <div class="card__header">
+            <h2 class="card__title" id="settingsTitle">Connection Settings</h2>
+          </div>
+          <div class="card__body">
+            <label class="field">
+              <div class="field__label">Remote server URL</div>
+              <input class="input" id="serverUrl" type="url" inputmode="url" placeholder="http://192.168.1.50:8000" autocomplete="off" />
+              <div class="hint">Used for <code>/status</code>, <code>/voices</code>, and <code>/tts</code> requests.</div>
+            </label>
+            <div class="row">
+              <button class="btn btn--primary" id="saveUrlBtn" type="button">Save</button>
+              <div class="spacer"></div>
+              <button class="btn btn--ghost" id="clearUrlBtn" type="button">Clear</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toasts" id="toasts" aria-live="polite" aria-relevant="additions"></div>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

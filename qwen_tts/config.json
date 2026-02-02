@@ -1,0 +1,22 @@
+{
+  "name": "Qwen TTS",
+  "slug": "qwen_tts",
+  "description": "Lightweight Home Assistant ingress dashboard for a remote Qwen TTS server.",
+  "version": "0.1.0",
+  "image": "ghcr.io/chadforbes/{arch}-addon-qwen_tts",
+  "arch": [
+    "aarch64",
+    "amd64"
+  ],
+  "startup": "services",
+  "boot": "auto",
+  "init": false,
+  "ingress": true,
+  "ingress_port": 8099,
+  "ingress_entry": "/",
+  "panel_title": "Qwen TTS",
+  "panel_icon": "mdi:robot",
+  "hassio_api": false,
+  "homeassistant_api": false,
+  "host_network": false
+}
