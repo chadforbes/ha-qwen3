@@ -11,8 +11,9 @@ fi
 # Normalize: trim whitespace and trailing slashes
 REMOTE_URL="$(echo "$REMOTE_URL" | tr -d '\r' | sed -e 's/^ *//; s/ *$//' -e 's:/*$::')"
 
-cat > /etc/nginx/http.d/default.conf <<EOF
-map \$http_upgrade \$connection_upgrade {
+{
+  cat <<'EOF'
+map $http_upgrade $connection_upgrade {
   default upgrade;
   '' close;
 }
@@ -27,14 +28,24 @@ server {
   root /www;
 
   location / {
-    try_files \$uri \$uri/ /index.html;
+    try_files $uri $uri/ /index.html;
   }
+EOF
+
+  if [ -z "$REMOTE_URL" ]; then
+    cat <<'EOF'
+
+  # Remote URL not configured yet.
+  location /api/ {
+    return 503;
+  }
+EOF
+  else
+    cat <<EOF
 
   # Same-origin proxy to the configured remote Qwen3 server.
   # This avoids browser CORS + mixed-content issues under Home Assistant ingress.
   location /api/ {
-    if ("$REMOTE_URL" = "") { return 503; }
-
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection \$connection_upgrade;
@@ -47,7 +58,10 @@ server {
     # Drop /api prefix
     proxy_pass $REMOTE_URL/;
   }
-}
 EOF
+  fi
+
+  echo "}"
+} > /etc/nginx/http.d/default.conf
 
 exec nginx -g 'daemon off;'
