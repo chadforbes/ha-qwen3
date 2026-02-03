@@ -18,7 +18,7 @@
             <span class="meta__sep">•</span>
             <span class="meta__item">Latency: <span id="latency">—</span></span>
             <span class="meta__sep">•</span>
-            <span class="meta__item">Voices: <span id="voiceCount">—</span></span>
+            <span class="meta__item">Session: <span id="sessionMeta">—</span></span>
           </div>
         </div>
         <div class="header__right">
@@ -33,9 +33,21 @@
           </div>
           <div class="card__body">
             <label class="field">
-              <div class="field__label">Voice</div>
-              <select class="select" id="voiceSelect"></select>
+              <div class="field__label">Session ID</div>
+              <input class="input" id="sessionId" type="text" placeholder="Paste a session_id..." autocomplete="off" />
+              <div class="hint">Required by the backend to generate previews.</div>
             </label>
+
+            <label class="field">
+              <div class="field__label">Reference audio (optional)</div>
+              <input class="input" id="referenceFile" type="file" accept="audio/*" />
+              <div class="hint">If you don’t have a session yet, upload reference audio to get one.</div>
+            </label>
+
+            <div class="row">
+              <button class="btn" id="uploadBtn" type="button">Upload reference</button>
+              <div class="spacer"></div>
+            </div>
 
             <label class="field">
               <div class="field__label">Text</div>
@@ -48,7 +60,7 @@
               <audio id="audio" preload="none"></audio>
             </div>
 
-            <div class="hint" id="previewHint">Generate creates a short audio preview using the remote server.</div>
+            <div class="hint" id="previewHint">Generate creates a short WAV preview using the remote server.</div>
           </div>
         </section>
 
@@ -82,15 +94,6 @@
           </div>
         </section>
 
-        <section class="card grid__full" aria-labelledby="voicesTitle">
-          <div class="card__header">
-            <h2 class="card__title" id="voicesTitle">Voices</h2>
-          </div>
-          <div class="card__body">
-            <div class="list" id="voicesList" role="list"></div>
-          </div>
-        </section>
-
         <section class="card grid__full" aria-labelledby="settingsTitle">
           <div class="card__header">
             <h2 class="card__title" id="settingsTitle">Connection Settings</h2>
@@ -99,7 +102,7 @@
             <label class="field">
               <div class="field__label">Remote server URL</div>
               <input class="input" id="serverUrl" type="url" inputmode="url" placeholder="http://192.168.1.50:8000" autocomplete="off" />
-              <div class="hint">Used for <code>/status</code>, <code>/voices</code>, and <code>/tts</code> requests.</div>
+              <div class="hint">Used for <code>/health</code>, <code>/upload</code>, <code>/ws</code>, and <code>/previews</code> requests.</div>
             </label>
             <div class="row">
               <button class="btn btn--primary" id="saveUrlBtn" type="button">Save</button>

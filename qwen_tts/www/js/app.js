@@ -1,16 +1,19 @@
 import { createApi } from "./api.js";
-import { $, renderVoices, setLatency, setOnline, setPercent, setQueue, setVoiceCount, toast } from "./ui.js";
+import { $, setLatency, setOnline, setPercent, setQueue, toast } from "./ui.js";
 
 const STORAGE_KEY_URL = "qwen_tts_remote_url";
+const STORAGE_KEY_SESSION = "qwen_tts_session_id";
 
 const els = {
   statusDot: $("#statusDot"),
   statusText: $("#statusText"),
   latency: $("#latency"),
-  voiceCount: $("#voiceCount"),
+  sessionMeta: $("#sessionMeta"),
   refreshBtn: $("#refreshBtn"),
 
-  voiceSelect: $("#voiceSelect"),
+  sessionId: $("#sessionId"),
+  referenceFile: $("#referenceFile"),
+  uploadBtn: $("#uploadBtn"),
   previewText: $("#previewText"),
   generateBtn: $("#generateBtn"),
   playBtn: $("#playBtn"),
@@ -22,8 +25,6 @@ const els = {
   ramBar: $("#ramBar"),
   queueValue: $("#queueValue"),
 
-  voicesList: $("#voicesList"),
-
   serverUrl: $("#serverUrl"),
   saveUrlBtn: $("#saveUrlBtn"),
   clearUrlBtn: $("#clearUrlBtn"),
@@ -32,9 +33,22 @@ const els = {
 };
 
 let state = {
-  voices: [],
   audioObjectUrl: ""
 };
+
+function isHomeAssistantIngress() {
+  const path = String(window.location?.pathname || "");
+  return path.includes("/api/hassio_ingress/") || path.includes("/api/ingress/");
+}
+
+function createApiForCurrentContext() {
+  // Under ingress, browser cross-origin fetch/ws commonly fails due to CORS/mixed-content.
+  // Use the add-on's same-origin /api proxy (configured via add-on options.remote_url).
+  if (isHomeAssistantIngress()) return createApi("");
+
+  const baseUrl = String(els.serverUrl.value || "").trim();
+  return createApi(baseUrl);
+}
 
 function loadSavedUrl() {
   try {
@@ -52,6 +66,30 @@ function saveUrl(url) {
   }
 }
 
+function loadSavedSession() {
+  try {
+    return localStorage.getItem(STORAGE_KEY_SESSION) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveSession(sessionId) {
+  try {
+    localStorage.setItem(STORAGE_KEY_SESSION, sessionId);
+  } catch {
+    // ignore
+  }
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(STORAGE_KEY_SESSION);
+  } catch {
+    // ignore
+  }
+}
+
 function clearUrl() {
   try {
     localStorage.removeItem(STORAGE_KEY_URL);
@@ -64,6 +102,7 @@ function setBusy(isBusy) {
   els.refreshBtn.disabled = isBusy;
   els.saveUrlBtn.disabled = isBusy;
   els.clearUrlBtn.disabled = isBusy;
+  els.uploadBtn.disabled = isBusy;
   els.generateBtn.disabled = isBusy;
 }
 
@@ -95,11 +134,15 @@ function getMetric(data, keys) {
   return null;
 }
 
+function setSessionMeta(sessionId) {
+  const sid = String(sessionId || "").trim();
+  els.sessionMeta.textContent = sid ? "Set" : "—";
+}
+
 async function refresh() {
-  const baseUrl = String(els.serverUrl.value || "").trim();
   resetAudio();
 
-  const api = createApi(baseUrl);
+  const api = createApiForCurrentContext();
 
   setBusy(true);
   let online = false;
@@ -107,76 +150,127 @@ async function refresh() {
 
   try {
     const start = performance.now();
-    const [statusRes, voicesRes] = await Promise.allSettled([api.status(), api.voices()]);
+    const healthRes = await api.health();
 
-    if (statusRes.status === "fulfilled") {
-      online = true;
-      latencyMs = performance.now() - start;
+    online = Boolean(healthRes && healthRes.status === "ok");
+    latencyMs = performance.now() - start;
 
-      const status = statusRes.value ?? {};
-      const cpu = parsePercent(getMetric(status, ["cpu", "cpu_usage", "cpuPercent", "cpu_percent"]));
-      const ram = parsePercent(getMetric(status, ["ram", "ram_usage", "memory", "memory_usage", "ramPercent", "ram_percent"]));
-      const queue = getMetric(status, ["queue", "queue_size", "queueSize"]);
+    // The updated backend health endpoint does not expose CPU/RAM/queue metrics.
+    setPercent(els.cpuValue, els.cpuBar, NaN);
+    setPercent(els.ramValue, els.ramBar, NaN);
+    setQueue(els.queueValue, null);
 
-      setPercent(els.cpuValue, els.cpuBar, cpu ?? NaN);
-      setPercent(els.ramValue, els.ramBar, ram ?? NaN);
-      setQueue(els.queueValue, queue);
-    } else {
-      setPercent(els.cpuValue, els.cpuBar, NaN);
-      setPercent(els.ramValue, els.ramBar, NaN);
-      setQueue(els.queueValue, null);
-    }
-
-    state.voices = voicesRes.status === "fulfilled" ? voicesRes.value : [];
-    const rendered = renderVoices(els.voiceSelect, els.voicesList, state.voices);
-
-    setVoiceCount(els.voiceCount, rendered.length);
+    setSessionMeta(els.sessionId.value);
     setOnline(els.statusDot, els.statusText, online);
     setLatency(els.latency, online ? latencyMs : NaN);
 
-    if (!baseUrl) toast(els.toasts, "Set a remote server URL to connect.", { variant: "error" });
+    if (!api.baseUrl && !isHomeAssistantIngress()) {
+      toast(els.toasts, "Set a remote server URL to connect.", { variant: "error" });
+    }
     else if (!online) toast(els.toasts, "Server unreachable (Offline).", { variant: "error" });
   } catch (e) {
     setOnline(els.statusDot, els.statusText, false);
     setLatency(els.latency, NaN);
-    setVoiceCount(els.voiceCount, NaN);
+    setSessionMeta(els.sessionId.value);
     setPercent(els.cpuValue, els.cpuBar, NaN);
     setPercent(els.ramValue, els.ramBar, NaN);
     setQueue(els.queueValue, null);
-    state.voices = [];
-    toast(els.toasts, e?.message ? String(e.message) : "Refresh failed.", { variant: "error" });
+    const msg = e?.message ? String(e.message) : "Refresh failed.";
+    if (isHomeAssistantIngress() && /failed to fetch/i.test(msg)) {
+      toast(els.toasts, "Fetch blocked by browser (CORS/mixed-content). Configure the add-on 'remote_url' option.", { variant: "error" });
+    } else {
+      toast(els.toasts, msg, { variant: "error" });
+    }
   } finally {
     setBusy(false);
   }
 }
 
+async function uploadReference() {
+  if (!isHomeAssistantIngress()) {
+    const baseUrl = String(els.serverUrl.value || "").trim();
+    if (!baseUrl) return toast(els.toasts, "Remote server URL is required.", { variant: "error" });
+  }
+
+  const file = els.referenceFile.files && els.referenceFile.files[0];
+  if (!file) return toast(els.toasts, "Choose a reference audio file first.", { variant: "error" });
+
+  setBusy(true);
+  try {
+    const api = createApiForCurrentContext();
+    const { sessionId } = await api.uploadReference(file);
+    els.sessionId.value = sessionId;
+    saveSession(sessionId);
+    setSessionMeta(sessionId);
+    toast(els.toasts, "Uploaded. Session ID saved.", { variant: "ok" });
+  } catch (e) {
+    toast(els.toasts, e?.message ? String(e.message) : "Upload failed.", { variant: "error" });
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function ensureSessionId(api) {
+  const current = String(els.sessionId.value || "").trim();
+  if (current) return current;
+
+  const file = els.referenceFile.files && els.referenceFile.files[0];
+  if (!file) {
+    throw new Error("Session ID is required (upload reference audio to get one).");
+  }
+
+  const { sessionId } = await api.uploadReference(file);
+  els.sessionId.value = sessionId;
+  saveSession(sessionId);
+  setSessionMeta(sessionId);
+  return sessionId;
+}
+
 async function generate() {
-  const baseUrl = String(els.serverUrl.value || "").trim();
-  const voice = String(els.voiceSelect.value || "").trim();
   const text = String(els.previewText.value || "").trim();
 
-  if (!baseUrl) return toast(els.toasts, "Remote server URL is required.", { variant: "error" });
-  if (!voice) return toast(els.toasts, "Select a voice first.", { variant: "error" });
+  if (!isHomeAssistantIngress()) {
+    const baseUrl = String(els.serverUrl.value || "").trim();
+    if (!baseUrl) return toast(els.toasts, "Remote server URL is required.", { variant: "error" });
+  }
   if (!text) return toast(els.toasts, "Enter some text to preview.", { variant: "error" });
 
   resetAudio();
   setBusy(true);
 
   try {
-    const api = createApi(baseUrl);
-    const result = await api.tts({ voice, text });
+    const api = createApiForCurrentContext();
 
-    if (result.kind === "blob") {
-      state.audioObjectUrl = URL.createObjectURL(result.blob);
-      els.audio.src = state.audioObjectUrl;
-    } else {
-      els.audio.src = result.url;
+    const sessionId = await ensureSessionId(api);
+    try {
+      const result = await api.generatePreview({ sessionId, text });
+      els.audio.src = result.audioUrl;
+    } catch (err) {
+      // If session is stale/invalid and a reference file exists, refresh session once and retry.
+      const file = els.referenceFile.files && els.referenceFile.files[0];
+      const msg = err?.message ? String(err.message) : "";
+      const looksSessionRelated = /session|invalid|not[_\s-]?found/i.test(msg);
+      if (file && looksSessionRelated) {
+        const { sessionId: newSession } = await api.uploadReference(file);
+        els.sessionId.value = newSession;
+        saveSession(newSession);
+        setSessionMeta(newSession);
+        const result2 = await api.generatePreview({ sessionId: newSession, text });
+        els.audio.src = result2.audioUrl;
+      } else {
+        throw err;
+      }
     }
 
     els.playBtn.disabled = false;
     toast(els.toasts, "Audio generated.", { variant: "ok" });
   } catch (e) {
-    toast(els.toasts, e?.message ? String(e.message) : "Generate failed.", { variant: "error" });
+    const msg = e?.message ? String(e.message) : "Generate failed.";
+    if (isHomeAssistantIngress() && /failed to fetch/i.test(msg)) {
+      toast(els.toasts, "Fetch blocked by browser (CORS/mixed-content). Configure the add-on 'remote_url' option.", { variant: "error" });
+    } else {
+      toast(els.toasts, msg, { variant: "error" });
+    }
   } finally {
     setBusy(false);
   }
@@ -191,8 +285,15 @@ function init() {
   els.previewText.value = "Hello from Qwen TTS.";
 
   els.refreshBtn.addEventListener("click", refresh);
+  els.uploadBtn.addEventListener("click", uploadReference);
   els.generateBtn.addEventListener("click", generate);
   els.playBtn.addEventListener("click", play);
+
+  els.sessionId.addEventListener("input", () => {
+    const sid = String(els.sessionId.value || "").trim();
+    setSessionMeta(sid);
+    if (sid) saveSession(sid);
+  });
 
   els.saveUrlBtn.addEventListener("click", () => {
     const url = String(els.serverUrl.value || "").trim();
@@ -205,15 +306,18 @@ function init() {
     els.serverUrl.value = "";
     clearUrl();
     resetAudio();
+    els.sessionId.value = "";
+    clearSession();
+    setSessionMeta(els.sessionId.value);
     toast(els.toasts, "Cleared.", { variant: "ok" });
     setOnline(els.statusDot, els.statusText, false);
     setLatency(els.latency, NaN);
-    setVoiceCount(els.voiceCount, NaN);
   });
 
   const saved = loadSavedUrl();
   els.serverUrl.value = saved;
-  renderVoices(els.voiceSelect, els.voicesList, []);
+  els.sessionId.value = loadSavedSession();
+  setSessionMeta(els.sessionId.value);
 
   if (saved) refresh();
 }

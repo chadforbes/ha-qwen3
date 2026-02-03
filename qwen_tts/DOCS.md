@@ -8,5 +8,5 @@ Per Home Assistant ingress requirements, the web server only allows connections 
 
 ## Notes
 
-- This add-on does **not** proxy requests to your remote Qwen TTS server; the dashboard runs in the browser and calls the remote server via fetch.
-- Your remote server must be reachable from the client device and may require CORS configuration.
+- This add-on can proxy requests to your remote Qwen3 server under `/api/*` (same-origin), which avoids browser CORS + mixed-content issues under Home Assistant ingress.
+- Configure the remote server URL via the add-on option `remote_url`.

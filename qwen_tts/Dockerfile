@@ -12,11 +12,14 @@ LABEL \
 RUN \
   apk add --no-cache \
     nginx \
+    jq \
   ; mkdir -p /run/nginx
 
-COPY ingress.conf /etc/nginx/http.d/default.conf
+COPY run.sh /run.sh
 COPY www /www
 
 EXPOSE 8099
 
-CMD ["nginx", "-g", "daemon off;"]
+RUN chmod +x /run.sh
+
+CMD ["/run.sh"]

@@ -18,5 +18,12 @@
   "panel_icon": "mdi:robot",
   "hassio_api": false,
   "homeassistant_api": false,
-  "host_network": false
+  "host_network": false,
+
+  "options": {
+    "remote_url": ""
+  },
+  "schema": {
+    "remote_url": "str?"
+  }
 }

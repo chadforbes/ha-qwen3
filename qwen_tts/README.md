@@ -5,19 +5,19 @@ Ingress dashboard for monitoring and previewing a **remote** Qwen TTS Server.
 - Serves static files from `/www`.
 - Runs no Qwen TTS process.
 
-## Remote server API
+## Remote server API (qwen3-server)
 
-The browser UI calls the remote server directly:
+The backend contract this dashboard targets:
 
-- `GET /status`
-- `GET /voices`
-- `POST /tts` with JSON body `{ "voice": "...", "text": "..." }`
+- `GET /health` → `{ "status": "ok" }`
+- `POST /upload` (multipart field `file`) → `{ "session_id": "..." }`
+- `WS /ws` (JSON `{type,data}` messages)
+- `GET /previews/{job_id}.wav`
 
-For audio preview, `/tts` can return:
+## Proxy mode (recommended for Home Assistant ingress)
 
-- `audio/*` response body (preferred), or
-- JSON with one of:
-  - `audio_url` / `url` (string)
-  - `audio_base64` / `audioBase64` / `audio` (base64 string) and optional `content_type`
+When the dashboard is loaded via Home Assistant ingress, it uses the add-on's same-origin proxy under `/api/*` to avoid browser CORS/mixed-content blocks.
 
-If the remote server is on a different origin than Home Assistant, it must allow browser access (CORS), otherwise the UI will show Offline/errors.
+- Set the add-on option `remote_url` to your qwen3-server base URL (example: `http://192.168.30.185:8000`).
+
+
