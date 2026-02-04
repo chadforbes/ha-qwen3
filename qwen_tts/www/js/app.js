@@ -38,7 +38,12 @@ let state = {
 
 function isHomeAssistantIngress() {
   const path = String(window.location?.pathname || "");
-  return path.includes("/api/hassio_ingress/") || path.includes("/api/ingress/");
+  return (
+    path.includes("/api/hassio_ingress/") ||
+    path.includes("/api/ingress/") ||
+    path.includes("/hassio/ingress/") ||
+    /\/ingress(\/|$)/i.test(path)
+  );
 }
 
 function createApiForCurrentContext() {

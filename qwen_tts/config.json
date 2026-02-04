@@ -2,7 +2,7 @@
   "name": "Qwen TTS",
   "slug": "qwen_tts",
   "description": "Lightweight Home Assistant ingress dashboard for a remote Qwen TTS server.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "image": "ghcr.io/chadforbes/{arch}-addon-qwen_tts",
   "arch": [
     "aarch64",

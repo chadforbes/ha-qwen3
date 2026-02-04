@@ -4,7 +4,11 @@ const PROXY_PREFIX = "/api";
 function normalizeBaseUrl(input) {
   const trimmed = String(input ?? "").trim();
   if (!trimmed) return "";
-  return trimmed.replace(/\/+$/, "");
+  const withoutTrailing = trimmed.replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(withoutTrailing)) return withoutTrailing;
+  // Allow entering bare host:port (e.g. 192.168.30.185:8000)
+  if (/^[^\s/]+(:\d+)?(\/.*)?$/i.test(withoutTrailing)) return `http://${withoutTrailing}`;
+  return withoutTrailing;
 }
 
 function withTimeout(ms) {
@@ -66,11 +70,11 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 
   function toWsUrl(path) {
     if (isProxy) {
-      const u = new URL(window.location.href);
-      if (u.protocol === "https:") u.protocol = "wss:";
-      else if (u.protocol === "http:") u.protocol = "ws:";
-      else throw new Error(`Unsupported protocol: ${u.protocol}`);
-      return new URL(path.replace(/^\//, ""), u).toString();
+      const origin = new URL(window.location.origin);
+      if (origin.protocol === "https:") origin.protocol = "wss:";
+      else if (origin.protocol === "http:") origin.protocol = "ws:";
+      else throw new Error(`Unsupported protocol: ${origin.protocol}`);
+      return new URL(path, origin).toString();
     }
 
     const u = new URL(`${base}/`);
