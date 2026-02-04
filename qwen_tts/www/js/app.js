@@ -11,10 +11,10 @@ const els = {
   sessionMeta: $("#sessionMeta"),
   refreshBtn: $("#refreshBtn"),
 
-  sessionId: $("#sessionId"),
   referenceFile: $("#referenceFile"),
+  referenceTranscript: $("#referenceTranscript"),
   uploadBtn: $("#uploadBtn"),
-  previewText: $("#previewText"),
+  responseTranscript: $("#responseTranscript"),
   generateBtn: $("#generateBtn"),
   playBtn: $("#playBtn"),
   audio: $("#audio"),
@@ -28,12 +28,14 @@ const els = {
   serverUrl: $("#serverUrl"),
   saveUrlBtn: $("#saveUrlBtn"),
   clearUrlBtn: $("#clearUrlBtn"),
+  connectionHint: $("#connectionHint"),
 
   toasts: $("#toasts")
 };
 
 let state = {
-  audioObjectUrl: ""
+  audioObjectUrl: "",
+  sessionId: ""
 };
 
 function isHomeAssistantIngress() {
@@ -144,6 +146,14 @@ function setSessionMeta(sessionId) {
   els.sessionMeta.textContent = sid ? "Set" : "—";
 }
 
+function setSessionId(sessionId) {
+  const sid = String(sessionId || "").trim();
+  state.sessionId = sid;
+  setSessionMeta(sid);
+  if (sid) saveSession(sid);
+  else clearSession();
+}
+
 async function refresh() {
   resetAudio();
 
@@ -165,7 +175,7 @@ async function refresh() {
     setPercent(els.ramValue, els.ramBar, NaN);
     setQueue(els.queueValue, null);
 
-    setSessionMeta(els.sessionId.value);
+    setSessionMeta(state.sessionId);
     setOnline(els.statusDot, els.statusText, online);
     setLatency(els.latency, online ? latencyMs : NaN);
 
@@ -176,7 +186,7 @@ async function refresh() {
   } catch (e) {
     setOnline(els.statusDot, els.statusText, false);
     setLatency(els.latency, NaN);
-    setSessionMeta(els.sessionId.value);
+    setSessionMeta(state.sessionId);
     setPercent(els.cpuValue, els.cpuBar, NaN);
     setPercent(els.ramValue, els.ramBar, NaN);
     setQueue(els.queueValue, null);
@@ -200,13 +210,16 @@ async function uploadReference() {
   const file = els.referenceFile.files && els.referenceFile.files[0];
   if (!file) return toast(els.toasts, "Choose a reference audio file first.", { variant: "error" });
 
+  const transcript = String(els.referenceTranscript.value || "").trim();
+  if (!transcript) return toast(els.toasts, "Reference transcription is required.", { variant: "error" });
+
+  const responseTranscript = String(els.responseTranscript.value || "").trim();
+
   setBusy(true);
   try {
     const api = createApiForCurrentContext();
-    const { sessionId } = await api.uploadReference(file);
-    els.sessionId.value = sessionId;
-    saveSession(sessionId);
-    setSessionMeta(sessionId);
+    const { sessionId } = await api.uploadReference(file, { transcript, responseTranscript });
+    setSessionId(sessionId);
     toast(els.toasts, "Uploaded. Session ID saved.", { variant: "ok" });
   } catch (e) {
     toast(els.toasts, e?.message ? String(e.message) : "Upload failed.", { variant: "error" });
@@ -216,7 +229,7 @@ async function uploadReference() {
 }
 
 async function ensureSessionId(api) {
-  const current = String(els.sessionId.value || "").trim();
+  const current = String(state.sessionId || "").trim();
   if (current) return current;
 
   const file = els.referenceFile.files && els.referenceFile.files[0];
@@ -224,21 +237,26 @@ async function ensureSessionId(api) {
     throw new Error("Session ID is required (upload reference audio to get one).");
   }
 
-  const { sessionId } = await api.uploadReference(file);
-  els.sessionId.value = sessionId;
-  saveSession(sessionId);
-  setSessionMeta(sessionId);
+  const transcript = String(els.referenceTranscript.value || "").trim();
+  if (!transcript) {
+    throw new Error("Reference transcription is required (needed for upload).");
+  }
+
+  const responseTranscript = String(els.responseTranscript.value || "").trim();
+
+  const { sessionId } = await api.uploadReference(file, { transcript, responseTranscript });
+  setSessionId(sessionId);
   return sessionId;
 }
 
 async function generate() {
-  const text = String(els.previewText.value || "").trim();
+  const text = String(els.responseTranscript.value || "").trim();
 
   if (!isHomeAssistantIngress()) {
     const baseUrl = String(els.serverUrl.value || "").trim();
     if (!baseUrl) return toast(els.toasts, "Remote server URL is required.", { variant: "error" });
   }
-  if (!text) return toast(els.toasts, "Enter some text to preview.", { variant: "error" });
+  if (!text) return toast(els.toasts, "Enter a response transcript.", { variant: "error" });
 
   resetAudio();
   setBusy(true);
@@ -256,10 +274,10 @@ async function generate() {
       const msg = err?.message ? String(err.message) : "";
       const looksSessionRelated = /session|invalid|not[_\s-]?found/i.test(msg);
       if (file && looksSessionRelated) {
-        const { sessionId: newSession } = await api.uploadReference(file);
-        els.sessionId.value = newSession;
-        saveSession(newSession);
-        setSessionMeta(newSession);
+        const transcript = String(els.referenceTranscript.value || "").trim();
+        const responseTranscript = String(els.responseTranscript.value || "").trim();
+        const { sessionId: newSession } = await api.uploadReference(file, { transcript, responseTranscript });
+        setSessionId(newSession);
         const result2 = await api.generatePreview({ sessionId: newSession, text });
         els.audio.src = result2.audioUrl;
       } else {
@@ -287,18 +305,13 @@ function play() {
 }
 
 function init() {
-  els.previewText.value = "Hello from Qwen TTS.";
+  els.referenceTranscript.value = "";
+  els.responseTranscript.value = "Hello from Qwen TTS.";
 
   els.refreshBtn.addEventListener("click", refresh);
   els.uploadBtn.addEventListener("click", uploadReference);
   els.generateBtn.addEventListener("click", generate);
   els.playBtn.addEventListener("click", play);
-
-  els.sessionId.addEventListener("input", () => {
-    const sid = String(els.sessionId.value || "").trim();
-    setSessionMeta(sid);
-    if (sid) saveSession(sid);
-  });
 
   els.saveUrlBtn.addEventListener("click", () => {
     const url = String(els.serverUrl.value || "").trim();
@@ -311,9 +324,7 @@ function init() {
     els.serverUrl.value = "";
     clearUrl();
     resetAudio();
-    els.sessionId.value = "";
-    clearSession();
-    setSessionMeta(els.sessionId.value);
+    setSessionId("");
     toast(els.toasts, "Cleared.", { variant: "ok" });
     setOnline(els.statusDot, els.statusText, false);
     setLatency(els.latency, NaN);
@@ -321,8 +332,18 @@ function init() {
 
   const saved = loadSavedUrl();
   els.serverUrl.value = saved;
-  els.sessionId.value = loadSavedSession();
-  setSessionMeta(els.sessionId.value);
+  setSessionId(loadSavedSession());
+
+  if (isHomeAssistantIngress()) {
+    els.serverUrl.disabled = true;
+    els.saveUrlBtn.disabled = true;
+    els.clearUrlBtn.disabled = true;
+    els.serverUrl.value = "";
+    els.serverUrl.placeholder = "Configured in add-on settings";
+    if (els.connectionHint) {
+      els.connectionHint.textContent = "Under Home Assistant ingress, this is configured in the add-on options (remote_url).";
+    }
+  }
 
   if (saved) refresh();
 }

@@ -8,8 +8,13 @@ if [ -f "$OPTIONS_FILE" ]; then
   REMOTE_URL="$(jq -r '.remote_url // ""' "$OPTIONS_FILE" 2>/dev/null || echo "")"
 fi
 
-# Normalize: trim whitespace and trailing slashes
-REMOTE_URL="$(echo "$REMOTE_URL" | tr -d '\r' | sed -e 's/^ *//; s/ *$//' -e 's:/*$::')"
+# Normalize: trim whitespace/quotes and trailing slashes
+REMOTE_URL="$(echo "$REMOTE_URL" | tr -d '\r' | sed -e 's/^ *//; s/ *$//' -e 's/^"//; s/"$//' -e "s/^'//; s/'$//" -e 's:/*$::')"
+
+# Accept host:port by auto-prepending a scheme for nginx proxy_pass
+if [ -n "$REMOTE_URL" ] && ! echo "$REMOTE_URL" | grep -Eq '^https?://'; then
+  REMOTE_URL="http://$REMOTE_URL"
+fi
 
 {
   cat <<'EOF'

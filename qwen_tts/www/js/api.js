@@ -105,16 +105,20 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       return data ?? {};
     },
 
-    async uploadReference(file) {
+    async uploadReference(file, { transcript, responseTranscript } = {}) {
       if (!(file instanceof Blob)) throw new Error("Reference file is required.");
 
       const form = new FormData();
       form.append("file", file, file.name || "reference.wav");
+      const t = String(transcript || "").trim();
+      if (t) form.append("transcript", t);
+      const rt = String(responseTranscript || "").trim();
+      if (rt) form.append("response_transcript", rt);
 
       const url = isProxy ? proxyJoin("/upload") : `${base}/upload`;
-      const t = withTimeout(timeoutMs);
+      const tmo = withTimeout(timeoutMs);
       try {
-        const res = await fetch(url, { method: "POST", body: form, signal: t.signal });
+        const res = await fetch(url, { method: "POST", body: form, signal: tmo.signal });
         if (!res.ok) throw new Error(`Upload failed (${res.status})`);
         const data = await safeJson(res);
         const sessionId = data?.session_id;
@@ -123,7 +127,7 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
         }
         return { sessionId: sessionId.trim() };
       } finally {
-        t.cancel();
+        tmo.cancel();
       }
     },
 

@@ -33,15 +33,15 @@
           </div>
           <div class="card__body">
             <label class="field">
-              <div class="field__label">Session ID</div>
-              <input class="input" id="sessionId" type="text" placeholder="Paste a session_id..." autocomplete="off" />
-              <div class="hint">Required by the backend to generate previews.</div>
-            </label>
-
-            <label class="field">
               <div class="field__label">Reference audio (optional)</div>
               <input class="input" id="referenceFile" type="file" accept="audio/*" />
               <div class="hint">If you don’t have a session yet, upload reference audio to get one.</div>
+            </label>
+
+            <label class="field">
+              <div class="field__label">Reference transcription</div>
+              <textarea class="textarea" id="referenceTranscript" rows="3" placeholder="What is said in the reference audio..."></textarea>
+              <div class="hint">Used to guide the voice cloning.</div>
             </label>
 
             <div class="row">
@@ -50,8 +50,8 @@
             </div>
 
             <label class="field">
-              <div class="field__label">Text</div>
-              <textarea class="textarea" id="previewText" rows="4" placeholder="Type something to preview..."></textarea>
+              <div class="field__label">Response transcript</div>
+              <textarea class="textarea" id="responseTranscript" rows="4" placeholder="What you want the generated audio to say..."></textarea>
             </label>
 
             <div class="row">
@@ -102,7 +102,7 @@
             <label class="field">
               <div class="field__label">Remote server URL</div>
               <input class="input" id="serverUrl" type="url" inputmode="url" placeholder="http://192.168.30.185:8000" autocomplete="off" />
-              <div class="hint">Used for <code>/health</code>, <code>/upload</code>, <code>/ws</code>, and <code>/previews</code> requests.</div>
+              <div class="hint" id="connectionHint">Used for <code>/health</code>, <code>/upload</code>, <code>/ws</code>, and <code>/previews</code> requests.</div>
             </label>
             <div class="row">
               <button class="btn btn--primary" id="saveUrlBtn" type="button">Save</button>
