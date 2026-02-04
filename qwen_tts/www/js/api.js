@@ -1,5 +1,9 @@
 const DEFAULT_TIMEOUT_MS = 12000;
-const PROXY_PREFIX = "/api";
+// IMPORTANT: no leading slash.
+// Under Home Assistant ingress, the add-on is mounted at a tokenized path like:
+//   /api/hassio_ingress/<token>/
+// Using absolute paths ("/api/...") would hit Home Assistant Core API instead.
+const PROXY_PREFIX = "api";
 
 function normalizeBaseUrl(input) {
   const trimmed = String(input ?? "").trim();
@@ -38,8 +42,13 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 
   const isProxy = !base;
 
+  function proxyJoin(path) {
+    const p = String(path || "").replace(/^\/+/, "");
+    return `${PROXY_PREFIX}/${p}`;
+  }
+
   async function request(path, { method = "GET", body, headers } = {}) {
-    const url = isProxy ? `${PROXY_PREFIX}${path}` : `${base}${path}`;
+    const url = isProxy ? proxyJoin(path) : `${base}${path}`;
     const t = withTimeout(timeoutMs);
     try {
       const res = await fetch(url, {
@@ -62,19 +71,19 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     const raw = pathOrUrl.trim();
     if (/^https?:\/\//i.test(raw)) return raw;
     if (isProxy) {
-      const p = raw.startsWith("/") ? raw : `/${raw}`;
-      return new URL(`${PROXY_PREFIX}${p}`, window.location.origin).toString();
+      return new URL(proxyJoin(raw), window.location.href).toString();
     }
     return new URL(pathOrUrl, `${base}/`).toString();
   }
 
   function toWsUrl(path) {
     if (isProxy) {
-      const origin = new URL(window.location.origin);
-      if (origin.protocol === "https:") origin.protocol = "wss:";
-      else if (origin.protocol === "http:") origin.protocol = "ws:";
-      else throw new Error(`Unsupported protocol: ${origin.protocol}`);
-      return new URL(path, origin).toString();
+      const baseUrl = new URL(window.location.href);
+      if (baseUrl.protocol === "https:") baseUrl.protocol = "wss:";
+      else if (baseUrl.protocol === "http:") baseUrl.protocol = "ws:";
+      else throw new Error(`Unsupported protocol: ${baseUrl.protocol}`);
+      // Use relative paths so we stay within the ingress token path.
+      return new URL(String(path || "").replace(/^\/+/, ""), baseUrl).toString();
     }
 
     const u = new URL(`${base}/`);
@@ -102,7 +111,7 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       const form = new FormData();
       form.append("file", file, file.name || "reference.wav");
 
-      const url = isProxy ? `${PROXY_PREFIX}/upload` : `${base}/upload`;
+      const url = isProxy ? proxyJoin("/upload") : `${base}/upload`;
       const t = withTimeout(timeoutMs);
       try {
         const res = await fetch(url, { method: "POST", body: form, signal: t.signal });
@@ -124,7 +133,7 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       if (!sid) throw new Error("Session ID is required.");
       if (!ttsText) throw new Error("Text is required.");
 
-      const wsUrl = toWsUrl(isProxy ? `${PROXY_PREFIX}/ws` : "/ws");
+      const wsUrl = toWsUrl(isProxy ? proxyJoin("/ws") : "/ws");
       const ws = new WebSocket(wsUrl);
       let done = false;
 
