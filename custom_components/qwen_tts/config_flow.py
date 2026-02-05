@@ -11,7 +11,13 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_BASE_URL, CONF_REFERENCE_AUDIO_URL, CONF_SESSION_ID, DOMAIN
+from .const import (
+    CONF_BASE_URL,
+    CONF_REFERENCE_AUDIO_URL,
+    CONF_REFERENCE_TRANSCRIPTION,
+    CONF_SESSION_ID,
+    DOMAIN,
+)
 
 
 async def _async_check_health(hass: HomeAssistant, base_url: str) -> bool:
@@ -37,8 +43,11 @@ class QwenTTSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             base_url: str = user_input[CONF_BASE_URL].rstrip("/")
             session_id: str = (user_input.get(CONF_SESSION_ID) or "").strip()
             reference_audio_url: str = (user_input.get(CONF_REFERENCE_AUDIO_URL) or "").strip()
+            reference_transcription: str = (
+                user_input.get(CONF_REFERENCE_TRANSCRIPTION) or ""
+            ).strip()
 
-            if not session_id and not reference_audio_url:
+            if not session_id and (not reference_audio_url or not reference_transcription):
                 errors["base"] = "missing_reference"
             else:
                 ok = await _async_check_health(self.hass, base_url)
@@ -54,6 +63,8 @@ class QwenTTSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data[CONF_SESSION_ID] = session_id
                 if reference_audio_url:
                     data[CONF_REFERENCE_AUDIO_URL] = reference_audio_url
+                if reference_transcription:
+                    data[CONF_REFERENCE_TRANSCRIPTION] = reference_transcription
 
                 return self.async_create_entry(title="Qwen TTS", data=data)
 
@@ -62,6 +73,7 @@ class QwenTTSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_BASE_URL): cv.url,
                 vol.Optional(CONF_SESSION_ID): str,
                 vol.Optional(CONF_REFERENCE_AUDIO_URL): cv.url,
+                vol.Optional(CONF_REFERENCE_TRANSCRIPTION): str,
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)

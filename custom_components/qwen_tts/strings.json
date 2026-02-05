@@ -7,13 +7,14 @@
         "data": {
           "base_url": "Server URL",
           "session_id": "Session ID (optional)",
-          "reference_audio_url": "Reference audio URL (optional)"
+          "reference_audio_url": "Reference audio URL (optional)",
+          "reference_transcription": "Reference transcription (required if using Reference audio URL)"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to the server.",
-      "missing_reference": "Provide either a Session ID or a Reference audio URL."
+      "missing_reference": "Provide either a Session ID, or a Reference audio URL + transcription."
     }
   }
 }

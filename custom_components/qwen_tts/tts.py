@@ -19,6 +19,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import (
     CONF_BASE_URL,
     CONF_REFERENCE_AUDIO_URL,
+    CONF_REFERENCE_TRANSCRIPTION,
     CONF_SESSION_ID,
     DEFAULT_LANGUAGE,
     DEFAULT_TIMEOUT_SECONDS,
@@ -65,56 +66,55 @@ class QwenTTSEntity(TextToSpeechEntity):
         self._base_url: str = entry.data[CONF_BASE_URL].rstrip("/")
         self._session_id: str | None = entry.data.get(CONF_SESSION_ID)
         self._reference_audio_url: str | None = entry.data.get(CONF_REFERENCE_AUDIO_URL)
+        self._reference_transcription: str | None = entry.data.get(
+            CONF_REFERENCE_TRANSCRIPTION
+        )
 
-    async def _async_upload_reference_audio(self) -> str:
+    async def _async_download_reference_audio(self) -> tuple[bytes, str]:
         if not self._reference_audio_url:
             raise HomeAssistantError(
-                "No session_id configured and no reference_audio_url available to upload."
+                "No session_id configured and no reference_audio_url available."
             )
 
         session = async_get_clientsession(self.hass)
-
         async with async_timeout.timeout(DEFAULT_TIMEOUT_SECONDS):
             async with session.get(self._reference_audio_url) as resp:
                 if resp.status != 200:
                     raise HomeAssistantError(
                         f"Failed to download reference audio (HTTP {resp.status})."
                     )
-                reference_bytes = await resp.read()
+                content_type = resp.headers.get("Content-Type") or "audio/wav"
+                return await resp.read(), content_type
+
+    async def _async_generate_preview_http(self, message: str) -> bytes:
+        transcription = (self._reference_transcription or "").strip()
+        if not transcription:
+            raise HomeAssistantError(
+                "Missing reference transcription. Configure reference_transcription."
+            )
+
+        reference_bytes, content_type = await self._async_download_reference_audio()
 
         form = aiohttp.FormData()
         form.add_field(
-            "file",
+            "audio",
             reference_bytes,
             filename="reference.wav",
-            content_type="audio/wav",
+            content_type=content_type,
         )
+        form.add_field("transcription", transcription)
+        form.add_field("response_text", message)
 
-        upload_url = urljoin(f"{self._base_url.rstrip('/')}/", "upload")
+        session = async_get_clientsession(self.hass)
+        preview_url = urljoin(f"{self._base_url.rstrip('/')}/", "preview")
         async with async_timeout.timeout(DEFAULT_TIMEOUT_SECONDS):
-            async with session.post(upload_url, data=form) as resp:
+            async with session.post(preview_url, data=form) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     raise HomeAssistantError(
-                        f"Upload failed (HTTP {resp.status}): {text[:200]}"
+                        f"Preview failed (HTTP {resp.status}): {text[:200]}"
                     )
-                data = await resp.json(content_type=None)
-
-        session_id = data.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            raise HomeAssistantError("Upload response missing session_id")
-
-        self._session_id = session_id
-        self.hass.config_entries.async_update_entry(
-            self._entry,
-            data={**self._entry.data, CONF_SESSION_ID: session_id},
-        )
-        return session_id
-
-    async def _async_ensure_session_id(self) -> str:
-        if self._session_id:
-            return self._session_id
-        return await self._async_upload_reference_audio()
+                return await resp.read()
 
     async def _async_generate_preview(self, message: str, session_id: str) -> _TTSComplete:
         session = async_get_clientsession(self.hass)
@@ -175,15 +175,10 @@ class QwenTTSEntity(TextToSpeechEntity):
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]
     ) -> TtsAudioType:
-        try:
-            session_id = await self._async_ensure_session_id()
-        except HomeAssistantError:
-            raise
-        except Exception as err:  # noqa: BLE001
-            raise HomeAssistantError("Failed to prepare TTS session") from err
+        if self._session_id:
+            complete = await self._async_generate_preview(message, self._session_id)
+            audio_bytes = await self._async_download_audio(complete.audio_url)
+            return "wav", audio_bytes
 
-        complete = await self._async_generate_preview(message, session_id)
-        audio_bytes = await self._async_download_audio(complete.audio_url)
-
-        # The backend returns WAV previews.
+        audio_bytes = await self._async_generate_preview_http(message)
         return "wav", audio_bytes

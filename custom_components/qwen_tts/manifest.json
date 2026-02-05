@@ -4,5 +4,5 @@
   "config_flow": true,
   "dependencies": ["tts"],
   "documentation": "https://github.com/chadforbes/ha-qwen3",
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

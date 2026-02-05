@@ -10,7 +10,7 @@ Ingress dashboard for monitoring and previewing a **remote** Qwen TTS Server.
 The backend contract this dashboard targets:
 
 - `GET /health` → `{ "status": "ok" }`
-- `POST /upload` (multipart field `file`) → `{ "session_id": "..." }`
+- `POST /preview` (multipart fields `audio`, `transcription`, `response_text`) → WAV audio response
 - `WS /ws` (JSON `{type,data}` messages)
 - `GET /previews/{job_id}.wav`
 
