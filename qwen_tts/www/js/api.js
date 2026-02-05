@@ -72,17 +72,14 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       form.append("response_text", rt);
 
       const url = isProxy ? proxyJoin("/preview") : `${base}/preview`;
-      const tmo = withTimeout(timeoutMs);
-      try {
-        const res = await fetch(url, { method: "POST", body: form, signal: tmo.signal });
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(`Preview failed (${res.status})${text ? `: ${text.slice(0, 200)}` : ""}`);
-        }
-        return await res.blob();
-      } finally {
-        tmo.cancel();
+      // Preview generation can be slow; do not impose a client-side timeout here.
+      // (Health checks still use `timeoutMs`.)
+      const res = await fetch(url, { method: "POST", body: form });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Preview failed (${res.status})${text ? `: ${text.slice(0, 200)}` : ""}`);
       }
+      return await res.blob();
     },
   };
 }

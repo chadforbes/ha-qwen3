@@ -11,12 +11,15 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+import async_timeout
+
 from .const import (
     CONF_BASE_URL,
     CONF_REFERENCE_AUDIO_URL,
     CONF_REFERENCE_TRANSCRIPTION,
     CONF_SESSION_ID,
     DOMAIN,
+    HEALTH_TIMEOUT_SECONDS,
 )
 
 
@@ -24,11 +27,12 @@ async def _async_check_health(hass: HomeAssistant, base_url: str) -> bool:
     session = async_get_clientsession(hass)
     health_url = urljoin(f"{base_url.rstrip('/')}/", "health")
     try:
-        async with session.get(health_url) as resp:
-            if resp.status != 200:
-                return False
-            data = await resp.json(content_type=None)
-            return data.get("status") == "ok"
+        async with async_timeout.timeout(HEALTH_TIMEOUT_SECONDS):
+            async with session.get(health_url) as resp:
+                if resp.status != 200:
+                    return False
+                data = await resp.json(content_type=None)
+                return data.get("status") == "ok"
     except Exception:
         return False
 

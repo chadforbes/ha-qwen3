@@ -116,6 +116,26 @@ code{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Libera
 
 .hint{color:var(--muted);font-size:12px;margin-top:8px}
 
+.loading{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:10px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.spinner{
+  width:14px;
+  height:14px;
+  border-radius:999px;
+  border:2px solid var(--border);
+  border-top-color:var(--accent);
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+
 .metric{margin-bottom:12px}
 .metric__top{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
 .metric__label{color:var(--muted);font-size:12px}

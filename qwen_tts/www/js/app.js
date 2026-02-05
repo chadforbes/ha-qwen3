@@ -16,6 +16,7 @@ const els = {
   generateBtn: $("#generateBtn"),
   playBtn: $("#playBtn"),
   audio: $("#audio"),
+  generating: $("#generating"),
 
   cpuValue: $("#cpuValue"),
   cpuBar: $("#cpuBar"),
@@ -107,6 +108,10 @@ function resetAudio() {
   }
 }
 
+function setGenerating(isGenerating) {
+  els.generating.hidden = !isGenerating;
+}
+
 async function refresh() {
   resetAudio();
 
@@ -177,6 +182,7 @@ async function generate() {
 
   resetAudio();
   setBusy(true);
+  setGenerating(true);
 
   try {
     const api = createApiForCurrentContext();
@@ -198,6 +204,7 @@ async function generate() {
       toast(els.toasts, msg, { variant: "error" });
     }
   } finally {
+    setGenerating(false);
     setBusy(false);
   }
 }
@@ -210,6 +217,8 @@ function play() {
 function init() {
   els.referenceTranscript.value = "";
   els.responseTranscript.value = "Hello from Qwen TTS.";
+
+  setGenerating(false);
 
   els.refreshBtn.addEventListener("click", refresh);
   els.generateBtn.addEventListener("click", generate);

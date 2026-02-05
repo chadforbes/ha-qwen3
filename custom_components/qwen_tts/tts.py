@@ -22,9 +22,15 @@ from .const import (
     CONF_REFERENCE_TRANSCRIPTION,
     CONF_SESSION_ID,
     DEFAULT_LANGUAGE,
-    DEFAULT_TIMEOUT_SECONDS,
+    DOWNLOAD_TIMEOUT_SECONDS,
+    PREVIEW_TIMEOUT_SECONDS,
     DOMAIN,
 )
+
+
+def _timeout_ctx(seconds: int) -> async_timeout.Timeout:
+    # Use 0 to mean "no timeout".
+    return async_timeout.timeout(seconds if seconds and seconds > 0 else None)
 
 
 @dataclass
@@ -77,7 +83,7 @@ class QwenTTSEntity(TextToSpeechEntity):
             )
 
         session = async_get_clientsession(self.hass)
-        async with async_timeout.timeout(DEFAULT_TIMEOUT_SECONDS):
+        async with _timeout_ctx(DOWNLOAD_TIMEOUT_SECONDS):
             async with session.get(self._reference_audio_url) as resp:
                 if resp.status != 200:
                     raise HomeAssistantError(
@@ -107,7 +113,7 @@ class QwenTTSEntity(TextToSpeechEntity):
 
         session = async_get_clientsession(self.hass)
         preview_url = urljoin(f"{self._base_url.rstrip('/')}/", "preview")
-        async with async_timeout.timeout(DEFAULT_TIMEOUT_SECONDS):
+        async with _timeout_ctx(PREVIEW_TIMEOUT_SECONDS):
             async with session.post(preview_url, data=form) as resp:
                 if resp.status != 200:
                     text = await resp.text()
@@ -126,12 +132,12 @@ class QwenTTSEntity(TextToSpeechEntity):
         }
 
         try:
-            async with async_timeout.timeout(DEFAULT_TIMEOUT_SECONDS):
+            async with _timeout_ctx(PREVIEW_TIMEOUT_SECONDS):
                 async with session.ws_connect(ws_url, heartbeat=30) as ws:
                     await ws.send_json(payload)
 
                     while True:
-                        msg = await ws.receive(timeout=DEFAULT_TIMEOUT_SECONDS)
+                        msg = await ws.receive(timeout=None)
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             try:
                                 parsed = json.loads(msg.data)
@@ -163,7 +169,7 @@ class QwenTTSEntity(TextToSpeechEntity):
         if not absolute.startswith("http://") and not absolute.startswith("https://"):
             absolute = urljoin(f"{self._base_url.rstrip('/')}/", audio_url.lstrip("/"))
 
-        async with async_timeout.timeout(DEFAULT_TIMEOUT_SECONDS):
+        async with _timeout_ctx(DOWNLOAD_TIMEOUT_SECONDS):
             async with session.get(absolute) as resp:
                 if resp.status != 200:
                     text = await resp.text()
