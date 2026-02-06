@@ -17,7 +17,6 @@ from .const import (
     CONF_BASE_URL,
     CONF_REFERENCE_AUDIO_URL,
     CONF_REFERENCE_TRANSCRIPTION,
-    CONF_SESSION_ID,
     CONF_VOICE_ID,
     CONF_VOICE_NAME,
     DOMAIN,
@@ -93,7 +92,6 @@ class QwenTTSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             base_url: str = _normalize_http_url(user_input[CONF_BASE_URL]).rstrip("/")
             voice_id: str = (user_input.get(CONF_VOICE_ID) or "").strip()
-            session_id: str = (user_input.get(CONF_SESSION_ID) or "").strip()
             reference_audio_url: str = _normalize_http_url(
                 (user_input.get(CONF_REFERENCE_AUDIO_URL) or "").strip()
             )
@@ -126,8 +124,6 @@ class QwenTTSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data: dict[str, Any] = {CONF_BASE_URL: base_url}
                 if voice_id:
                     data[CONF_VOICE_ID] = voice_id
-                if session_id:
-                    data[CONF_SESSION_ID] = session_id
                 if reference_audio_url:
                     data[CONF_REFERENCE_AUDIO_URL] = reference_audio_url
                 if reference_transcription:
@@ -146,7 +142,6 @@ class QwenTTSConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_BASE_URL): str,
                 vol.Optional(CONF_VOICE_ID): str,
                 vol.Optional(CONF_VOICE_NAME): str,
-                vol.Optional(CONF_SESSION_ID): str,
                 vol.Optional(CONF_REFERENCE_AUDIO_URL): str,
                 vol.Optional(CONF_REFERENCE_TRANSCRIPTION): str,
             }

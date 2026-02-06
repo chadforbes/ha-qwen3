@@ -50,7 +50,6 @@ const els = {
 
 let state = {
   audioObjectUrl: "",
-  lastPreviewSessionId: "",
   hasPreview: false,
   isBusy: false,
   voices: [],
@@ -79,10 +78,19 @@ function isHomeAssistantIngress() {
 function createApiForCurrentContext() {
   // Under ingress, browser cross-origin fetch commonly fails due to CORS/mixed-content.
   // Use the add-on's same-origin /api proxy (configured via add-on options.remote_url).
-  if (isHomeAssistantIngress()) return createApi("");
 
-  const baseUrl = String(els.serverUrl.value || "").trim();
-  return createApi(baseUrl);
+  // Memoize to avoid creating multiple API instances, each with its own persistent WebSocket.
+  // Recreate only when the effective base URL changes.
+  const effectiveBaseUrl = isHomeAssistantIngress() ? "" : String(els.serverUrl.value || "").trim();
+  if (!createApiForCurrentContext._cache) {
+    createApiForCurrentContext._cache = { key: null, api: null };
+  }
+  const cache = createApiForCurrentContext._cache;
+  if (!cache.api || cache.key !== effectiveBaseUrl) {
+    cache.key = effectiveBaseUrl;
+    cache.api = createApi(effectiveBaseUrl);
+  }
+  return cache.api;
 }
 
 function loadSavedUrl() {
@@ -232,7 +240,7 @@ async function saveVoice() {
 
   try {
     const api = createApiForCurrentContext();
-    const saved = await api.saveVoice({ sessionId: state.lastPreviewSessionId, name, description });
+    const saved = await api.saveVoice({ name, description });
     const vid =
       saved && typeof saved === "object"
         ? typeof saved.voice_id === "string"
@@ -258,7 +266,6 @@ async function saveVoice() {
     }
 
     // Session upload folder is consumed/moved by save_voice; require a new preview for another save.
-    state.lastPreviewSessionId = "";
     state.hasPreview = false;
     updateSaveVoiceEnabled();
 
@@ -302,7 +309,6 @@ async function generate() {
   if (!text) return toast(els.toasts, "Enter a response transcript.", { variant: "error" });
 
   resetAudio();
-  state.lastPreviewSessionId = "";
   state.hasPreview = false;
   setBusy(true);
   setGenerating(true);
@@ -310,7 +316,6 @@ async function generate() {
   try {
     const api = createApiForCurrentContext();
     const result = await api.preview({ file, transcription: transcript, responseText: text });
-    state.lastPreviewSessionId = String(result?.sessionId || "").trim();
     state.hasPreview = true;
     updateSaveVoiceEnabled();
     state.audioObjectUrl = URL.createObjectURL(result.blob);
@@ -357,13 +362,11 @@ function init() {
   els.saveVoiceBtn.addEventListener("click", saveVoice);
 
   els.referenceFile.addEventListener("change", () => {
-    state.lastPreviewSessionId = "";
     state.hasPreview = false;
     updateReferenceMeta();
     updateSaveVoiceEnabled();
   });
   els.referenceTranscript.addEventListener("input", () => {
-    state.lastPreviewSessionId = "";
     state.hasPreview = false;
     updateReferenceMeta();
     updateSaveVoiceEnabled();

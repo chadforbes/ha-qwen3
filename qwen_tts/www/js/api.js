@@ -1,4 +1,8 @@
 const DEFAULT_TIMEOUT_MS = 12000;
+const DEFAULT_WS_PING_INTERVAL_MS = 25000;
+const DEFAULT_WS_SERVER_IDLE_TIMEOUT_MS = 65000;
+const DEFAULT_WS_CONNECT_TIMEOUT_MS = 8000;
+const DEFAULT_WS_MAX_BACKOFF_MS = 8000;
 // IMPORTANT: no leading slash.
 // Under Home Assistant ingress, the add-on is mounted at a tokenized path like:
 //   /api/hassio_ingress/<token>/
@@ -45,24 +49,6 @@ function headerGetCaseInsensitive(headers, name) {
   return "";
 }
 
-function extractPreviewSessionId(res) {
-  if (!res || !res.headers) return "";
-  // Not (yet) standardized in docs; support a few reasonable header names.
-  const candidates = [
-    "x-session-id",
-    "x-preview-session-id",
-    "x-upload-session-id",
-    "x-qwen-session-id",
-    "session-id",
-  ];
-  for (const name of candidates) {
-    const raw = headerGetCaseInsensitive(res.headers, name);
-    const sid = String(raw || "").trim();
-    if (sid) return sid;
-  }
-  return "";
-}
-
 async function safeJson(res) {
   try {
     return await res.json();
@@ -74,6 +60,26 @@ async function safeJson(res) {
 export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const base = normalizeBaseUrl(baseUrl);
   const isProxy = !base;
+
+  // --- Persistent WebSocket state (per API instance) ---
+  /** @type {WebSocket|null} */
+  let ws = null;
+  /** @type {Promise<WebSocket>|null} */
+  let wsConnecting = null;
+  /** @type {number|null} */
+  let wsPingTimer = null;
+  /** @type {number|null} */
+  let wsIdleTimer = null;
+  /** @type {number|null} */
+  let wsReconnectTimer = null;
+  let wsBackoffMs = 250;
+  let wsLastMessageAt = 0;
+  let wsManuallyClosed = false;
+
+  /** @type {Map<string, {resolve: Function, reject: Function, timer: number|null}>} */
+  const wsPending = new Map();
+  /** @type {Map<string, Array<Function>>} */
+  const wsTypeListeners = new Map();
 
   function proxyJoin(path) {
     const p = String(path || "").replace(/^\/+/, "");
@@ -99,6 +105,295 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     return toWebSocketUrl(resolveHttpUrl(path));
   }
 
+  function jitter(ms) {
+    const delta = ms * 0.2;
+    return ms + (Math.random() * 2 - 1) * delta;
+  }
+
+  function clearTimer(id) {
+    if (id === null || id === undefined) return null;
+    clearTimeout(id);
+    return null;
+  }
+
+  function wsArmPing() {
+    wsPingTimer = clearTimer(wsPingTimer);
+    wsPingTimer = setTimeout(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Keep-alive message. The backend may ignore unknown types; that's fine.
+      // Prefer sending an object to keep it JSON.
+      try {
+        ws.send(JSON.stringify({ type: "ping", data: { t: Date.now() } }));
+      } catch {
+        // ignore; close handler will reconnect if needed.
+      }
+      wsArmPing();
+    }, DEFAULT_WS_PING_INTERVAL_MS);
+  }
+
+  function wsArmIdleWatchdog() {
+    wsIdleTimer = clearTimer(wsIdleTimer);
+    wsIdleTimer = setTimeout(() => {
+      // If we haven't received any data in a while, force a reconnect.
+      // This helps with silent network drops where the socket stays OPEN.
+      const idleFor = Date.now() - (wsLastMessageAt || 0);
+      if (ws && ws.readyState === WebSocket.OPEN && idleFor > DEFAULT_WS_SERVER_IDLE_TIMEOUT_MS) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      } else {
+        wsArmIdleWatchdog();
+      }
+    }, DEFAULT_WS_SERVER_IDLE_TIMEOUT_MS);
+  }
+
+  function wsFailAllPending(err) {
+    for (const [id, p] of wsPending.entries()) {
+      if (p.timer) clearTimeout(p.timer);
+      wsPending.delete(id);
+      try {
+        p.reject(err);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  function wsScheduleReconnect() {
+    if (wsManuallyClosed) return;
+    if (wsReconnectTimer) return;
+    const delay = Math.min(DEFAULT_WS_MAX_BACKOFF_MS, Math.max(250, jitter(wsBackoffMs)));
+    wsBackoffMs = Math.min(DEFAULT_WS_MAX_BACKOFF_MS, wsBackoffMs * 2);
+    wsReconnectTimer = setTimeout(() => {
+      wsReconnectTimer = null;
+      // Fire and forget; any send() will await connection.
+      void ensureWebSocket();
+    }, delay);
+  }
+
+  function wsOnMessage(ev) {
+    wsLastMessageAt = Date.now();
+    wsArmIdleWatchdog();
+
+    let msg;
+    try {
+      msg = JSON.parse(String(ev.data || ""));
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+
+    // NOTE: qwen3-server currently does NOT use request_id correlation.
+    // Keep this path for forward compatibility in case it gets added later.
+    const reqId =
+      typeof msg.request_id === "string"
+        ? msg.request_id
+        : typeof msg.requestId === "string"
+          ? msg.requestId
+          : "";
+    if (reqId && wsPending.has(reqId)) {
+      const p = wsPending.get(reqId);
+      wsPending.delete(reqId);
+      if (p?.timer) clearTimeout(p.timer);
+      if (msg.type === "error") {
+        // Server sends: {type:'error', data:{message:string}}
+        const data = msg.data;
+        const message =
+          data && typeof data === "object" && typeof data.message === "string"
+            ? data.message
+            : typeof data === "string"
+              ? data
+              : "WebSocket request failed.";
+        p.reject(new Error(message));
+      } else {
+        p.resolve(msg);
+      }
+      return;
+    }
+
+    // Broadcast-by-type listeners.
+    const type = typeof msg.type === "string" ? msg.type : "";
+    if (type && wsTypeListeners.has(type)) {
+      for (const fn of wsTypeListeners.get(type) || []) {
+        try {
+          fn(msg);
+        } catch {
+          // ignore listener errors
+        }
+      }
+    }
+  }
+
+  function wsCleanupSocket() {
+    if (!ws) return;
+    try {
+      ws.removeEventListener("message", wsOnMessage);
+    } catch {
+      // ignore
+    }
+    wsPingTimer = clearTimer(wsPingTimer);
+    wsIdleTimer = clearTimer(wsIdleTimer);
+    ws = null;
+  }
+
+  async function ensureWebSocket() {
+    if (ws && ws.readyState === WebSocket.OPEN) return ws;
+    if (wsConnecting) return wsConnecting;
+
+    const wsUrl = resolveWsUrl("/ws");
+    wsManuallyClosed = false;
+
+    wsConnecting = new Promise((resolve, reject) => {
+      let settled = false;
+      const sock = new WebSocket(wsUrl);
+      const connectTimeout = setTimeout(() => {
+        try {
+          sock.close();
+        } catch {
+          // ignore
+        }
+        if (settled) return;
+        settled = true;
+        reject(new Error("WebSocket connect timeout."));
+      }, DEFAULT_WS_CONNECT_TIMEOUT_MS);
+
+      sock.addEventListener("open", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(connectTimeout);
+        ws = sock;
+        wsBackoffMs = 250;
+        wsLastMessageAt = Date.now();
+        ws.addEventListener("message", wsOnMessage);
+        wsArmPing();
+        wsArmIdleWatchdog();
+        resolve(ws);
+      });
+
+      sock.addEventListener("error", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(connectTimeout);
+        reject(new Error("WebSocket error."));
+      });
+
+      sock.addEventListener("close", () => {
+        clearTimeout(connectTimeout);
+
+        // If we were currently connected, this is a disconnect; otherwise it's a failed connect.
+        const wasActive = ws === sock;
+        if (wasActive) {
+          wsCleanupSocket();
+          wsFailAllPending(new Error("WebSocket disconnected."));
+          wsScheduleReconnect();
+        }
+
+        if (!settled) {
+          settled = true;
+          reject(new Error("WebSocket closed before open."));
+        }
+      });
+    }).finally(() => {
+      wsConnecting = null;
+    });
+
+    return wsConnecting;
+  }
+
+  function wsSendAndWait(payload, { expectType, timeoutMs = 120000 } = {}) {
+    const expect = String(expectType || "").trim();
+
+    // If the payload doesn't provide request_id (and the server doesn't send one),
+    // fall back to type-based matching.
+    const requestId =
+      payload && typeof payload === "object" && typeof payload.request_id === "string"
+        ? payload.request_id
+        : payload && typeof payload === "object" && typeof payload.requestId === "string"
+          ? payload.requestId
+          : "";
+
+    return new Promise(async (resolve, reject) => {
+      let typeListener = null;
+      let timer = null;
+
+      // Always listen for server-side errors during this wait.
+      // Server sends: {type:'error', data:{message:string}}
+      const errorListener = (errMsg) => {
+        const data = errMsg?.data;
+        const message =
+          data && typeof data === "object" && typeof data.message === "string"
+            ? data.message
+            : typeof data === "string"
+              ? data
+              : "WebSocket error.";
+        cleanup();
+        reject(new Error(message));
+      };
+
+      function cleanup() {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        if (requestId) {
+          wsPending.delete(requestId);
+        }
+        if (typeListener && expect) {
+          const arr = wsTypeListeners.get(expect) || [];
+          wsTypeListeners.set(
+            expect,
+            arr.filter((fn) => fn !== typeListener)
+          );
+        }
+
+        const errArr = wsTypeListeners.get("error") || [];
+        wsTypeListeners.set(
+          "error",
+          errArr.filter((fn) => fn !== errorListener)
+        );
+      }
+
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timed out waiting for ${expect || "response"}.`));
+      }, timeoutMs);
+
+      const existingErrorListeners = wsTypeListeners.get("error") || [];
+      wsTypeListeners.set("error", [...existingErrorListeners, errorListener]);
+
+      if (requestId) {
+        wsPending.set(requestId, {
+          resolve: (msg) => {
+            cleanup();
+            resolve(msg);
+          },
+          reject: (err) => {
+            cleanup();
+            reject(err);
+          },
+          timer,
+        });
+      }
+
+      if (expect) {
+        typeListener = (msg) => {
+          cleanup();
+          resolve(msg);
+        };
+        const arr = wsTypeListeners.get(expect) || [];
+        wsTypeListeners.set(expect, [...arr, typeListener]);
+      }
+
+      try {
+        const sock = await ensureWebSocket();
+        sock.send(JSON.stringify(payload));
+      } catch (e) {
+        cleanup();
+        reject(e);
+      }
+    });
+  }
+
   return {
     baseUrl: base,
 
@@ -116,96 +411,21 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       return data ?? {};
     },
 
-    async saveVoice({ sessionId, name, description }) {
+    async saveVoice({ name, description }) {
       const voiceName = String(name || "").trim();
       if (!voiceName) throw new Error("Voice name is required.");
-
-      const sid = String(sessionId || "").trim();
-
-      const wsUrl = resolveWsUrl("/ws");
 
       const desc = String(description || "").trim();
       const data = {
         name: voiceName,
         description: desc || null,
-        ...(sid ? { session_id: sid } : {}),
       };
+
+      // Use (and keep) the shared WebSocket connection for this API instance.
+      // This avoids connect/close churn and keeps the backend session warm.
       const payload = { type: "save_voice", data };
-
-      const result = await new Promise((resolve, reject) => {
-        let settled = false;
-        const ws = new WebSocket(wsUrl);
-        const timeout = setTimeout(() => {
-          try {
-            ws.close();
-          } catch {
-            // ignore
-          }
-          if (settled) return;
-          settled = true;
-          reject(new Error("Timed out waiting for voice_saved."));
-        }, 120000);
-
-        function finish(err, value) {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeout);
-          try {
-            ws.close();
-          } catch {
-            // ignore
-          }
-          if (err) reject(err);
-          else resolve(value);
-        }
-
-        ws.addEventListener("open", () => {
-          try {
-            ws.send(JSON.stringify(payload));
-          } catch (e) {
-            finish(e);
-          }
-        });
-
-        ws.addEventListener("message", (ev) => {
-          let msg;
-          try {
-            msg = JSON.parse(String(ev.data || ""));
-          } catch {
-            return;
-          }
-          if (!msg || typeof msg !== "object") return;
-
-          if (msg.type === "voice_saved") {
-            finish(null, msg.data || {});
-            return;
-          }
-
-          if (msg.type === "error") {
-            const data = msg.data;
-            const message =
-              data && typeof data === "object" && typeof data.message === "string"
-                ? data.message
-                : typeof data === "string"
-                  ? data
-                  : "Voice save failed.";
-            finish(new Error(message));
-          }
-        });
-
-        ws.addEventListener("error", () => {
-          finish(new Error("WebSocket error."));
-        });
-
-        ws.addEventListener("close", () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeout);
-          reject(new Error("WebSocket closed before voice_saved."));
-        });
-      });
-
-      return result;
+      const msg = await wsSendAndWait(payload, { expectType: "voice_saved", timeoutMs: 120000 });
+      return (msg && typeof msg === "object" && msg.data) || {};
     },
 
     async preview({ file, transcription, responseText }) {
@@ -229,9 +449,9 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
         throw new Error(`Preview failed (${res.status})${text ? `: ${text.slice(0, 200)}` : ""}`);
       }
 
-      const sessionId = extractPreviewSessionId(res);
       const blob = await res.blob();
-      return { blob, sessionId };
+      // Server no longer uses session IDs; preview always updates the server's latest upload.
+      return { blob };
     },
   };
 }

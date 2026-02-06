@@ -22,7 +22,6 @@ from .const import (
     CONF_BASE_URL,
     CONF_REFERENCE_AUDIO_URL,
     CONF_REFERENCE_TRANSCRIPTION,
-    CONF_SESSION_ID,
     CONF_VOICE_ID,
     CONF_VOICE_NAME,
     DEFAULT_LANGUAGE,
@@ -92,7 +91,6 @@ class QwenTTSEntity(TextToSpeechEntity):
         self._attr_name = entry.title
         self._base_url: str = entry.data[CONF_BASE_URL].rstrip("/")
         self._voice_id: str | None = entry.data.get(CONF_VOICE_ID)
-        self._session_id: str | None = entry.data.get(CONF_SESSION_ID)
         self._reference_audio_url: str | None = entry.data.get(CONF_REFERENCE_AUDIO_URL)
         self._reference_transcription: str | None = entry.data.get(
             CONF_REFERENCE_TRANSCRIPTION
@@ -141,7 +139,7 @@ class QwenTTSEntity(TextToSpeechEntity):
         voices = payload.get("voices") if isinstance(payload, dict) else None
         if not isinstance(voices, list) or not voices:
             raise HomeAssistantError(
-                "No saved voices found on server. Create one first, or configure a voice_id/session_id/reference_audio_url."
+                "No saved voices found on server. Create one first, or configure a voice_id/reference_audio_url."
             )
 
         for item in voices:
@@ -157,7 +155,7 @@ class QwenTTSEntity(TextToSpeechEntity):
     async def _async_download_reference_audio(self) -> tuple[bytes, str]:
         if not self._reference_audio_url:
             raise HomeAssistantError(
-                "No session_id configured and no reference_audio_url available."
+                "No reference_audio_url available."
             )
 
         session = async_get_clientsession(self.hass)
@@ -175,7 +173,7 @@ class QwenTTSEntity(TextToSpeechEntity):
         if not transcription:
             _LOGGER.warning(
                 "No reference_transcription configured; proceeding without it. "
-                "If the backend rejects the request or voice quality is poor, set reference_transcription or configure a session_id."
+                "If the backend rejects the request or voice quality is poor, set reference_transcription."
             )
 
         reference_bytes, content_type = await self._async_download_reference_audio()
@@ -201,13 +199,13 @@ class QwenTTSEntity(TextToSpeechEntity):
                     )
                 return await resp.read()
 
-    async def _async_generate_preview(self, message: str, session_id: str) -> _TTSComplete:
+    async def _async_generate_preview(self, message: str) -> _TTSComplete:
         session = async_get_clientsession(self.hass)
         ws_url = _ws_url_from_http(self._base_url, "/ws")
 
         payload = {
             "type": "generate_preview",
-            "data": {"session_id": session_id, "text": message},
+            "data": {"text": message},
         }
 
         try:
@@ -233,6 +231,8 @@ class QwenTTSEntity(TextToSpeechEntity):
 
                             if msg_type == "error":
                                 data = parsed.get("data")
+                                if isinstance(data, dict) and isinstance(data.get("message"), str):
+                                    raise HomeAssistantError(f"Backend error: {data['message']}")
                                 raise HomeAssistantError(f"Backend error: {data}")
 
                         if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED):
@@ -263,11 +263,6 @@ class QwenTTSEntity(TextToSpeechEntity):
         voice_id = (self._voice_id or "").strip()
         if voice_id:
             audio_bytes = await self._async_generate_preview_saved_voice(message, voice_id)
-            return "wav", audio_bytes
-
-        if self._session_id:
-            complete = await self._async_generate_preview(message, self._session_id)
-            audio_bytes = await self._async_download_audio(complete.audio_url)
             return "wav", audio_bytes
 
         if self._reference_audio_url:
