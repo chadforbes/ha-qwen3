@@ -2,6 +2,7 @@
   "domain": "qwen_tts",
   "name": "Qwen TTS",
   "config_flow": true,
+  "platforms": ["tts"],
   "dependencies": ["tts"],
   "documentation": "https://github.com/chadforbes/ha-qwen3",
   "version": "0.2.0"

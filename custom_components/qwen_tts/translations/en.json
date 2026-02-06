@@ -6,15 +6,18 @@
         "description": "Connect Home Assistant to a qwen3-server instance.",
         "data": {
           "base_url": "Server URL",
+          "voice_id": "Saved voice ID (optional)",
+          "voice_name": "Voice name (optional)",
           "session_id": "Session ID (optional)",
           "reference_audio_url": "Reference audio URL (optional)",
-          "reference_transcription": "Reference transcription (required if using Reference audio URL)"
+          "reference_transcription": "Reference audio transcript (optional)"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to the server.",
-      "missing_reference": "Provide either a Session ID, or a Reference audio URL + transcription."
+      "invalid_url": "Enter a valid http(s) URL.",
+      "missing_reference": "Provide a Saved voice ID, a Session ID, or a Reference audio URL."
     }
   }
 }

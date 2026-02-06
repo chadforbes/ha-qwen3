@@ -19,6 +19,8 @@
             <span class="meta__item">Latency: <span id="latency">—</span></span>
             <span class="meta__sep">•</span>
             <span class="meta__item">Reference: <span id="sessionMeta">—</span></span>
+            <span class="meta__sep">•</span>
+            <span class="meta__item">Voices: <span id="voiceCount">—</span></span>
           </div>
         </div>
         <div class="header__right">
@@ -91,6 +93,36 @@
                 <div class="metric__value" id="queueValue">—</div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section class="card grid__full" aria-labelledby="voicesTitle">
+          <div class="card__header">
+            <h2 class="card__title" id="voicesTitle">Saved Voices</h2>
+          </div>
+          <div class="card__body">
+            <label class="field">
+              <div class="field__label">Voice name</div>
+              <input class="input" id="voiceName" type="text" autocomplete="off" placeholder="Nova" />
+            </label>
+
+            <label class="field">
+              <div class="field__label">Description (optional)</div>
+              <input class="input" id="voiceDescription" type="text" autocomplete="off" placeholder="Warm" />
+              <div class="hint">Generate a preview first (server must return a preview <code>session_id</code> header), then save via <code>WS /ws save_voice</code>.</div>
+            </label>
+
+            <div class="row">
+              <button class="btn btn--primary" id="saveVoiceBtn" type="button">Save Voice</button>
+              <div class="spacer"></div>
+            </div>
+
+            <div class="loading" id="savingVoice" hidden>
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Saving voice…</span>
+            </div>
+
+            <div class="list" id="voicesList" role="list" aria-label="Saved voices"></div>
           </div>
         </section>
 

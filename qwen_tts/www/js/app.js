@@ -1,5 +1,14 @@
 import { createApi } from "./api.js";
-import { $, setLatency, setOnline, setPercent, setQueue, toast } from "./ui.js";
+import {
+  $,
+  renderVoices,
+  setLatency,
+  setOnline,
+  setPercent,
+  setQueue,
+  setVoiceCount,
+  toast,
+} from "./ui.js";
 
 const STORAGE_KEY_URL = "qwen_tts_remote_url";
 
@@ -8,6 +17,7 @@ const els = {
   statusText: $("#statusText"),
   latency: $("#latency"),
   sessionMeta: $("#sessionMeta"),
+  voiceCount: $("#voiceCount"),
   refreshBtn: $("#refreshBtn"),
 
   referenceFile: $("#referenceFile"),
@@ -17,6 +27,12 @@ const els = {
   playBtn: $("#playBtn"),
   audio: $("#audio"),
   generating: $("#generating"),
+
+  voiceName: $("#voiceName"),
+  voiceDescription: $("#voiceDescription"),
+  saveVoiceBtn: $("#saveVoiceBtn"),
+  savingVoice: $("#savingVoice"),
+  voicesList: $("#voicesList"),
 
   cpuValue: $("#cpuValue"),
   cpuBar: $("#cpuBar"),
@@ -34,6 +50,7 @@ const els = {
 
 let state = {
   audioObjectUrl: "",
+  lastPreviewSessionId: "",
 };
 
 function computeReferenceReady() {
@@ -94,6 +111,7 @@ function setBusy(isBusy) {
   els.saveUrlBtn.disabled = isBusy;
   els.clearUrlBtn.disabled = isBusy;
   els.generateBtn.disabled = isBusy;
+  els.saveVoiceBtn.disabled = isBusy;
 }
 
 function resetAudio() {
@@ -110,6 +128,15 @@ function resetAudio() {
 
 function setGenerating(isGenerating) {
   els.generating.hidden = !isGenerating;
+}
+
+function setSavingVoice(isSaving) {
+  els.savingVoice.hidden = !isSaving;
+}
+
+function setVoices(raw) {
+  const voices = renderVoices(null, els.voicesList, raw?.voices ?? raw);
+  setVoiceCount(els.voiceCount, voices.length);
 }
 
 async function refresh() {
@@ -133,6 +160,14 @@ async function refresh() {
     setPercent(els.ramValue, els.ramBar, NaN);
     setQueue(els.queueValue, null);
 
+    try {
+      const voicesRes = await api.voices();
+      setVoices(voicesRes);
+    } catch {
+      setVoiceCount(els.voiceCount, NaN);
+      renderVoices(null, els.voicesList, []);
+    }
+
     updateReferenceMeta();
     setOnline(els.statusDot, els.statusText, online);
     setLatency(els.latency, online ? latencyMs : NaN);
@@ -149,6 +184,8 @@ async function refresh() {
     setPercent(els.cpuValue, els.cpuBar, NaN);
     setPercent(els.ramValue, els.ramBar, NaN);
     setQueue(els.queueValue, null);
+    setVoiceCount(els.voiceCount, NaN);
+    renderVoices(null, els.voicesList, []);
 
     const msg = e?.message ? String(e.message) : "Refresh failed.";
     if (isHomeAssistantIngress() && /failed to fetch/i.test(msg)) {
@@ -161,6 +198,53 @@ async function refresh() {
       toast(els.toasts, msg, { variant: "error" });
     }
   } finally {
+    setBusy(false);
+  }
+}
+
+async function saveVoice() {
+  if (!isHomeAssistantIngress()) {
+    const baseUrl = String(els.serverUrl.value || "").trim();
+    if (!baseUrl) return toast(els.toasts, "Remote server URL is required.", { variant: "error" });
+  }
+
+  if (!state.lastPreviewSessionId) {
+    return toast(els.toasts, "Generate a preview first, then save the voice.", { variant: "error" });
+  }
+
+  const name = String(els.voiceName.value || "").trim();
+  if (!name) return toast(els.toasts, "Voice name is required.", { variant: "error" });
+
+  const description = String(els.voiceDescription.value || "").trim();
+
+  setBusy(true);
+  setSavingVoice(true);
+
+  try {
+    const api = createApiForCurrentContext();
+    const saved = await api.saveVoice({ sessionId: state.lastPreviewSessionId, name, description });
+    const vid = saved && typeof saved.voice_id === "string" ? saved.voice_id : "";
+    toast(els.toasts, `Voice saved${vid ? `: ${vid}` : ""}.`, { variant: "ok" });
+
+    try {
+      const voicesRes = await api.voices();
+      setVoices(voicesRes);
+    } catch {
+      // ignore
+    }
+  } catch (e) {
+    const msg = e?.message ? String(e.message) : "Save voice failed.";
+    if (isHomeAssistantIngress() && /failed to fetch/i.test(msg)) {
+      toast(
+        els.toasts,
+        "Fetch blocked by browser (CORS/mixed-content). Configure the add-on 'remote_url' option.",
+        { variant: "error" }
+      );
+    } else {
+      toast(els.toasts, msg, { variant: "error" });
+    }
+  } finally {
+    setSavingVoice(false);
     setBusy(false);
   }
 }
@@ -181,17 +265,27 @@ async function generate() {
   if (!text) return toast(els.toasts, "Enter a response transcript.", { variant: "error" });
 
   resetAudio();
+  state.lastPreviewSessionId = "";
   setBusy(true);
   setGenerating(true);
 
   try {
     const api = createApiForCurrentContext();
-    const blob = await api.preview({ file, transcription: transcript, responseText: text });
-    state.audioObjectUrl = URL.createObjectURL(blob);
+    const result = await api.preview({ file, transcription: transcript, responseText: text });
+    state.lastPreviewSessionId = String(result?.sessionId || "").trim();
+    state.audioObjectUrl = URL.createObjectURL(result.blob);
     els.audio.src = state.audioObjectUrl;
 
     els.playBtn.disabled = false;
-    toast(els.toasts, "Audio generated.", { variant: "ok" });
+    if (!state.lastPreviewSessionId) {
+      toast(
+        els.toasts,
+        "Audio generated, but server did not provide a preview session id (cannot save this preview).",
+        { variant: "error" }
+      );
+    } else {
+      toast(els.toasts, "Audio generated.", { variant: "ok" });
+    }
   } catch (e) {
     const msg = e?.message ? String(e.message) : "Generate failed.";
     if (isHomeAssistantIngress() && /failed to fetch/i.test(msg)) {
@@ -217,12 +311,18 @@ function play() {
 function init() {
   els.referenceTranscript.value = "";
   els.responseTranscript.value = "Hello from Qwen TTS.";
+  els.voiceName.value = "";
+  els.voiceDescription.value = "";
 
   setGenerating(false);
+  setSavingVoice(false);
+  setVoiceCount(els.voiceCount, NaN);
+  renderVoices(null, els.voicesList, []);
 
   els.refreshBtn.addEventListener("click", refresh);
   els.generateBtn.addEventListener("click", generate);
   els.playBtn.addEventListener("click", play);
+  els.saveVoiceBtn.addEventListener("click", saveVoice);
 
   els.referenceFile.addEventListener("change", updateReferenceMeta);
   els.referenceTranscript.addEventListener("input", updateReferenceMeta);

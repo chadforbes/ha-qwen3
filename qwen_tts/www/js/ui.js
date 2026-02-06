@@ -57,28 +57,31 @@ function voiceToModel(v) {
   if (typeof v === "string") return { name: v, description: "" };
   if (!v || typeof v !== "object") return { name: "(unknown)", description: "" };
 
-  const name = String(v.name ?? v.id ?? v.voice ?? "(unnamed)");
+  const voiceId = String(v.voice_id ?? v.voiceId ?? v.id ?? "");
+  const name = String(v.name ?? v.voice ?? voiceId ?? "(unnamed)");
   const description = String(v.description ?? v.desc ?? "");
-  return { name, description };
+  return { voiceId, name, description };
 }
 
 export function renderVoices(selectEl, listEl, rawVoices) {
   const voices = normalizeVoices(rawVoices).map(voiceToModel);
 
-  selectEl.innerHTML = "";
-  if (voices.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "No voices";
-    selectEl.appendChild(opt);
-    selectEl.disabled = true;
-  } else {
-    selectEl.disabled = false;
-    for (const v of voices) {
+  if (selectEl) {
+    selectEl.innerHTML = "";
+    if (voices.length === 0) {
       const opt = document.createElement("option");
-      opt.value = v.name;
-      opt.textContent = v.name;
+      opt.value = "";
+      opt.textContent = "No voices";
       selectEl.appendChild(opt);
+      selectEl.disabled = true;
+    } else {
+      selectEl.disabled = false;
+      for (const v of voices) {
+        const opt = document.createElement("option");
+        opt.value = v.voiceId || v.name;
+        opt.textContent = v.name;
+        selectEl.appendChild(opt);
+      }
     }
   }
 
@@ -104,22 +107,18 @@ export function renderVoices(selectEl, listEl, rawVoices) {
 
     left.appendChild(name);
 
-    if (v.description) {
+    const details = [];
+    if (v.voiceId) details.push(`voice_id: ${v.voiceId}`);
+    if (v.description) details.push(v.description);
+
+    if (details.length) {
       const desc = document.createElement("div");
       desc.className = "voice__desc";
-      desc.textContent = v.description;
+      desc.textContent = details.join(" • ");
       left.appendChild(desc);
     }
 
-    const btn = document.createElement("button");
-    btn.className = "btn";
-    btn.type = "button";
-    btn.textContent = "Add Voice";
-    btn.disabled = true;
-    btn.title = "Placeholder for future functionality";
-
     row.appendChild(left);
-    row.appendChild(btn);
     listEl.appendChild(row);
   }
 

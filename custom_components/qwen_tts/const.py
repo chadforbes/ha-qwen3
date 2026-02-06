@@ -4,6 +4,8 @@ CONF_BASE_URL = "base_url"
 CONF_SESSION_ID = "session_id"
 CONF_REFERENCE_AUDIO_URL = "reference_audio_url"
 CONF_REFERENCE_TRANSCRIPTION = "reference_transcription"
+CONF_VOICE_NAME = "voice_name"
+CONF_VOICE_ID = "voice_id"
 
 # Timeouts
 # - Health checks should fail fast.
