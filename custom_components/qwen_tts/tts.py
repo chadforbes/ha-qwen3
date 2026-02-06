@@ -12,6 +12,13 @@ from urllib.parse import urljoin, urlparse
 import aiohttp
 
 from homeassistant.components.tts import TextToSpeechEntity, TtsAudioType
+from homeassistant.core import callback
+
+try:
+    # HA 2026+ exposes a Voice model
+    from homeassistant.components.tts import Voice  # type: ignore
+except Exception:  # pragma: no cover
+    Voice = None  # type: ignore
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -81,7 +88,11 @@ async def async_setup_entry(
 class QwenTTSEntity(TextToSpeechEntity):
     _attr_default_language = DEFAULT_LANGUAGE
     _attr_supported_languages = [DEFAULT_LANGUAGE]
-    _attr_supported_options: list[str] = []
+    # Home Assistant will pass `options` into `async_get_tts_audio`.
+    # We expose a `voice` option so Assist/Voice Assistant can select a saved voice at runtime.
+    # HA core uses `options.get("voice")` (see tts.write_tags).
+    # Some frontends might namespace options; accept both in `async_get_tts_audio`.
+    _attr_supported_options: list[str] = ["voice"]
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
@@ -96,6 +107,132 @@ class QwenTTSEntity(TextToSpeechEntity):
             CONF_REFERENCE_TRANSCRIPTION
         )
         self._voice_name: str | None = entry.data.get(CONF_VOICE_NAME)
+
+        # Cache voices list to avoid hitting the server on every Assist request.
+        self._voices_cache: list[dict[str, Any]] = []
+        self._voices_cache_ts: float = 0.0
+        self._voices_cache_ttl_s: float = 60.0
+
+        self._voices_refresh_lock = asyncio.Lock()
+        self._voices_refresh_task: asyncio.Task | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added, prefetch voices so UI has data."""
+
+        await super().async_added_to_hass()
+        self._schedule_voices_refresh(force=True)
+
+    def _schedule_voices_refresh(self, *, force: bool = False) -> None:
+        if self._voices_refresh_task and not self._voices_refresh_task.done():
+            return
+
+        self._voices_refresh_task = self.hass.async_create_task(
+            self._async_refresh_voices(force=force)
+        )
+
+    async def _async_refresh_voices(self, *, force: bool = False) -> None:
+        async with self._voices_refresh_lock:
+            try:
+                await self._async_list_voices(force=force)
+            except Exception as e:
+                _LOGGER.debug("Voice list refresh failed: %s", e)
+
+    def _voice_display_name(self, item: dict[str, Any]) -> str:
+        """Human-friendly name shown in HA UI.
+
+        We show `name (voice_id)` when name is present.
+        """
+
+        vid = str(item.get("voice_id") or item.get("id") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if name and vid and name.lower() != vid.lower():
+            return f"{name} ({vid})"
+        return name or vid or "(unknown)"
+
+    async def _async_list_voices(self, *, force: bool = False) -> list[dict[str, Any]]:
+        """Return list of saved voices from the server (cached)."""
+
+        import time
+
+        now = time.monotonic()
+        if not force and self._voices_cache and (now - self._voices_cache_ts) < self._voices_cache_ttl_s:
+            return self._voices_cache
+
+        session = async_get_clientsession(self.hass)
+        url = urljoin(f"{self._base_url.rstrip('/')}/", "voices")
+        async with _maybe_timeout(DOWNLOAD_TIMEOUT_SECONDS):
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise HomeAssistantError(
+                        f"Unable to list saved voices (HTTP {resp.status}): {text[:200]}"
+                    )
+                payload = await resp.json(content_type=None)
+
+        voices = payload.get("voices") if isinstance(payload, dict) else None
+        if not isinstance(voices, list):
+            voices = []
+
+        # Normalize a bit so we always have `voice_id` and `name` keys.
+        norm: list[dict[str, Any]] = []
+        for v in voices:
+            if isinstance(v, str):
+                norm.append({"voice_id": v, "name": v})
+            elif isinstance(v, dict):
+                vid = v.get("voice_id") or v.get("id")
+                if isinstance(vid, str) and vid.strip():
+                    norm.append({
+                        "voice_id": vid.strip(),
+                        "name": v.get("name") if isinstance(v.get("name"), str) else vid.strip(),
+                        "description": v.get("description") if isinstance(v.get("description"), str) else "",
+                    })
+
+        self._voices_cache = norm
+        self._voices_cache_ts = now
+        return norm
+
+    @callback
+    def async_get_supported_voices(self, language: str):
+        """Return supported voices (sync callback).
+
+        In HA 2026+, this is a callback that must return JSON-serializable
+        data immediately (no awaiting). We therefore return from cache and
+        schedule an async refresh in the background.
+        """
+
+        _LOGGER.debug("async_get_supported_voices called (language=%s)", language)
+        self._schedule_voices_refresh(force=False)
+
+        out: list[Any] = []
+        for v in self._voices_cache:
+            vid = str(v.get("voice_id") or "").strip()
+            if not vid:
+                continue
+            name = self._voice_display_name(v)
+            if Voice is not None:
+                try:
+                    out.append(Voice(voice_id=vid, name=name))
+                    continue
+                except Exception:
+                    pass
+            out.append({"voice": vid, "name": name})
+
+        _LOGGER.debug("Returning %d supported voices (from cache)", len(out))
+        return out
+
+    # Older HA / call sites sometimes look for this name.
+    @callback
+    def async_supported_voices(self, language: str):
+        return self.async_get_supported_voices(language)
+
+    async def async_get_supported_tts_options(self) -> dict[str, Any]:
+        """Expose option schema-like info for some HA UI paths.
+
+        Not all HA versions use this, but when they do, advertising `voice` helps render a selector.
+        """
+
+        # Minimal hint: option exists and is a string.
+        return {"voice": None}
 
     async def _async_generate_preview_saved_voice(self, message: str, voice_id: str) -> bytes:
         form = aiohttp.FormData()
@@ -260,7 +397,16 @@ class QwenTTSEntity(TextToSpeechEntity):
     async def async_get_tts_audio(
         self, message: str, language: str, options: dict[str, Any]
     ) -> TtsAudioType:
-        voice_id = (self._voice_id or "").strip()
+        # Runtime option from Assist/Voice Assistant UI.
+        # `async_get_supported_voices` returns a list keyed by `voice`.
+        opt_voice = ""
+        if isinstance(options, dict):
+            opt_voice = options.get("voice") or options.get("tts.voice") or ""
+        voice_id = str(opt_voice).strip()
+
+        # If a runtime voice isn't selected, fallback to user-configured voice_id.
+        if not voice_id:
+            voice_id = (self._voice_id or "").strip()
         if voice_id:
             audio_bytes = await self._async_generate_preview_saved_voice(message, voice_id)
             return "wav", audio_bytes
