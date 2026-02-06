@@ -51,6 +51,7 @@ const els = {
 let state = {
   audioObjectUrl: "",
   lastPreviewSessionId: "",
+  hasPreview: false,
   isBusy: false,
   voices: [],
 };
@@ -118,7 +119,7 @@ function setBusy(isBusy) {
 }
 
 function updateSaveVoiceEnabled() {
-  els.saveVoiceBtn.disabled = state.isBusy || !state.lastPreviewSessionId;
+  els.saveVoiceBtn.disabled = state.isBusy || !state.hasPreview;
 }
 
 function resetAudio() {
@@ -217,7 +218,7 @@ async function saveVoice() {
     if (!baseUrl) return toast(els.toasts, "Remote server URL is required.", { variant: "error" });
   }
 
-  if (!state.lastPreviewSessionId) {
+  if (!state.hasPreview) {
     return toast(els.toasts, "Generate a preview first, then save the voice.", { variant: "error" });
   }
 
@@ -258,6 +259,7 @@ async function saveVoice() {
 
     // Session upload folder is consumed/moved by save_voice; require a new preview for another save.
     state.lastPreviewSessionId = "";
+    state.hasPreview = false;
     updateSaveVoiceEnabled();
 
     try {
@@ -301,6 +303,7 @@ async function generate() {
 
   resetAudio();
   state.lastPreviewSessionId = "";
+  state.hasPreview = false;
   setBusy(true);
   setGenerating(true);
 
@@ -308,20 +311,13 @@ async function generate() {
     const api = createApiForCurrentContext();
     const result = await api.preview({ file, transcription: transcript, responseText: text });
     state.lastPreviewSessionId = String(result?.sessionId || "").trim();
+    state.hasPreview = true;
     updateSaveVoiceEnabled();
     state.audioObjectUrl = URL.createObjectURL(result.blob);
     els.audio.src = state.audioObjectUrl;
 
     els.playBtn.disabled = false;
-    if (!state.lastPreviewSessionId) {
-      toast(
-        els.toasts,
-        "Audio generated, but server did not provide a preview session id (cannot save this preview).",
-        { variant: "error" }
-      );
-    } else {
-      toast(els.toasts, "Audio generated.", { variant: "ok" });
-    }
+    toast(els.toasts, "Audio generated.", { variant: "ok" });
   } catch (e) {
     const msg = e?.message ? String(e.message) : "Generate failed.";
     if (isHomeAssistantIngress() && /failed to fetch/i.test(msg)) {
@@ -362,11 +358,13 @@ function init() {
 
   els.referenceFile.addEventListener("change", () => {
     state.lastPreviewSessionId = "";
+    state.hasPreview = false;
     updateReferenceMeta();
     updateSaveVoiceEnabled();
   });
   els.referenceTranscript.addEventListener("input", () => {
     state.lastPreviewSessionId = "";
+    state.hasPreview = false;
     updateReferenceMeta();
     updateSaveVoiceEnabled();
   });

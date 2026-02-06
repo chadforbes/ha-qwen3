@@ -116,49 +116,21 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       return data ?? {};
     },
 
-    async upload({ file, transcription }) {
-      if (!(file instanceof Blob)) throw new Error("Reference audio file is required.");
-
-      const form = new FormData();
-      form.append("file", file, file.name || "source.wav");
-      // Best-effort: newer servers may accept transcription alongside upload.
-      const t = String(transcription || "").trim();
-      if (t) form.append("transcription", t);
-
-      const url = resolveHttpUrl("/upload");
-      // Upload can be slow; do not impose a client-side timeout here.
-      const res = await fetch(url, { method: "POST", body: form });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Upload failed (${res.status})${text ? `: ${text.slice(0, 200)}` : ""}`);
-      }
-      const data = await safeJson(res);
-      const sessionId = data && typeof data.session_id === "string" ? data.session_id : "";
-      if (!sessionId) throw new Error("Upload did not return a session_id.");
-      return sessionId;
-    },
-
-    async saveVoice({ sessionId, file, transcription, name, description }) {
+    async saveVoice({ sessionId, name, description }) {
       const voiceName = String(name || "").trim();
       if (!voiceName) throw new Error("Voice name is required.");
 
-      let sid = String(sessionId || "").trim();
-      if (!sid) {
-        // Back-compat: older servers had /upload.
-        sid = await this.upload({ file, transcription });
-      }
+      const sid = String(sessionId || "").trim();
 
       const wsUrl = resolveWsUrl("/ws");
 
       const desc = String(description || "").trim();
-      const payload = {
-        type: "save_voice",
-        data: {
-          session_id: sid,
-          name: voiceName,
-          description: desc || null,
-        },
+      const data = {
+        name: voiceName,
+        description: desc || null,
+        ...(sid ? { session_id: sid } : {}),
       };
+      const payload = { type: "save_voice", data };
 
       const result = await new Promise((resolve, reject) => {
         let settled = false;

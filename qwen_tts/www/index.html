@@ -109,7 +109,7 @@
             <label class="field">
               <div class="field__label">Description (optional)</div>
               <input class="input" id="voiceDescription" type="text" autocomplete="off" placeholder="Warm" />
-              <div class="hint">Generate a preview first (server must return a preview <code>session_id</code> header), then save via <code>WS /ws save_voice</code>.</div>
+              <div class="hint">Generate a preview first, then save via <code>WS /ws save_voice</code> (server saves the most recent preview session).</div>
             </label>
 
             <div class="row">
@@ -134,7 +134,7 @@
             <label class="field">
               <div class="field__label">Remote server URL</div>
               <input class="input" id="serverUrl" type="url" inputmode="url" placeholder="http://192.168.30.185:8000" autocomplete="off" />
-              <div class="hint" id="connectionHint">Used for <code>/health</code>, <code>/preview</code>, <code>/ws</code>, and <code>/previews</code> requests.</div>
+              <div class="hint" id="connectionHint">Used for <code>/health</code>, <code>/voices</code>, <code>/preview</code>, and <code>/ws</code> requests.</div>
             </label>
             <div class="row">
               <button class="btn btn--primary" id="saveUrlBtn" type="button">Save</button>

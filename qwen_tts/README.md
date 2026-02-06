@@ -10,9 +10,11 @@ Ingress dashboard for monitoring and previewing a **remote** Qwen TTS Server.
 The backend contract this dashboard targets:
 
 - `GET /health` → `{ "status": "ok" }`
+- `GET /voices` → `{ "voices": [...] }`
 - `POST /preview` (multipart fields `audio`, `transcription`, `response_text`) → WAV audio response
 - `WS /ws` (JSON `{type,data}` messages)
-- `GET /previews/{job_id}.wav`
+
+Note: saving a voice via `WS /ws save_voice` saves the most recent preview session on the server.
 
 ## Proxy mode (recommended for Home Assistant ingress)
 

@@ -9,7 +9,7 @@ This is a Home Assistant **add-on repository**.
 
 This repo also includes a **custom Home Assistant integration** at `custom_components/qwen_tts/`.
 
-- It connects to a `qwen3-server` backend (`GET /health`, `POST /preview`, `WS /ws`, `GET /previews/...`).
-- Config requires your backend `base_url` and either a `session_id` or a `reference_audio_url` (used to upload and obtain a session automatically).
+- It connects to a `qwen3-server` backend (`GET /health`, `GET /voices`, `POST /preview`, `POST /preview-from-voice`, `WS /ws`).
+- Config requires your backend `base_url`. Optional: set `voice_id` (preferred) or `reference_audio_url` + `reference_transcription` for voice cloning. `session_id` is supported for legacy/advanced flows.
 
 See `qwen_tts/README.md` and `qwen_tts/DOCS.md` for the add-on details.
