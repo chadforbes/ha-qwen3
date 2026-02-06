@@ -51,6 +51,8 @@ const els = {
 let state = {
   audioObjectUrl: "",
   lastPreviewSessionId: "",
+  isBusy: false,
+  voices: [],
 };
 
 function computeReferenceReady() {
@@ -107,11 +109,16 @@ function clearUrl() {
 }
 
 function setBusy(isBusy) {
+  state.isBusy = Boolean(isBusy);
   els.refreshBtn.disabled = isBusy;
   els.saveUrlBtn.disabled = isBusy;
   els.clearUrlBtn.disabled = isBusy;
   els.generateBtn.disabled = isBusy;
-  els.saveVoiceBtn.disabled = isBusy;
+  updateSaveVoiceEnabled();
+}
+
+function updateSaveVoiceEnabled() {
+  els.saveVoiceBtn.disabled = state.isBusy || !state.lastPreviewSessionId;
 }
 
 function resetAudio() {
@@ -135,7 +142,9 @@ function setSavingVoice(isSaving) {
 }
 
 function setVoices(raw) {
-  const voices = renderVoices(null, els.voicesList, raw?.voices ?? raw);
+  const list = Array.isArray(raw?.voices) ? raw.voices : Array.isArray(raw) ? raw : [];
+  state.voices = list;
+  const voices = renderVoices(null, els.voicesList, list);
   setVoiceCount(els.voiceCount, voices.length);
 }
 
@@ -223,14 +232,40 @@ async function saveVoice() {
   try {
     const api = createApiForCurrentContext();
     const saved = await api.saveVoice({ sessionId: state.lastPreviewSessionId, name, description });
-    const vid = saved && typeof saved.voice_id === "string" ? saved.voice_id : "";
+    const vid =
+      saved && typeof saved === "object"
+        ? typeof saved.voice_id === "string"
+          ? saved.voice_id
+          : typeof saved.voiceId === "string"
+            ? saved.voiceId
+            : typeof saved.id === "string"
+              ? saved.id
+              : ""
+        : "";
     toast(els.toasts, `Voice saved${vid ? `: ${vid}` : ""}.`, { variant: "ok" });
+
+    // Update the UI immediately from the WS response.
+    // This keeps the dashboard responsive even if GET /voices is slow/unavailable.
+    if (vid) {
+      const exists = state.voices.some(
+        (v) => v && typeof v === "object" && String(v.voice_id || v.voiceId || v.id || "") === vid
+      );
+      if (!exists) {
+        state.voices = [...state.voices, { voice_id: vid, name, description }];
+        setVoices(state.voices);
+      }
+    }
+
+    // Session upload folder is consumed/moved by save_voice; require a new preview for another save.
+    state.lastPreviewSessionId = "";
+    updateSaveVoiceEnabled();
 
     try {
       const voicesRes = await api.voices();
       setVoices(voicesRes);
-    } catch {
-      // ignore
+    } catch (e) {
+      const msg = e?.message ? String(e.message) : "Failed to refresh voices.";
+      toast(els.toasts, `Voice saved, but voice list refresh failed: ${msg}`, { variant: "error" });
     }
   } catch (e) {
     const msg = e?.message ? String(e.message) : "Save voice failed.";
@@ -273,6 +308,7 @@ async function generate() {
     const api = createApiForCurrentContext();
     const result = await api.preview({ file, transcription: transcript, responseText: text });
     state.lastPreviewSessionId = String(result?.sessionId || "").trim();
+    updateSaveVoiceEnabled();
     state.audioObjectUrl = URL.createObjectURL(result.blob);
     els.audio.src = state.audioObjectUrl;
 
@@ -324,8 +360,16 @@ function init() {
   els.playBtn.addEventListener("click", play);
   els.saveVoiceBtn.addEventListener("click", saveVoice);
 
-  els.referenceFile.addEventListener("change", updateReferenceMeta);
-  els.referenceTranscript.addEventListener("input", updateReferenceMeta);
+  els.referenceFile.addEventListener("change", () => {
+    state.lastPreviewSessionId = "";
+    updateReferenceMeta();
+    updateSaveVoiceEnabled();
+  });
+  els.referenceTranscript.addEventListener("input", () => {
+    state.lastPreviewSessionId = "";
+    updateReferenceMeta();
+    updateSaveVoiceEnabled();
+  });
 
   els.saveUrlBtn.addEventListener("click", () => {
     const url = String(els.serverUrl.value || "").trim();
@@ -347,6 +391,7 @@ function init() {
   const saved = loadSavedUrl();
   els.serverUrl.value = saved;
   updateReferenceMeta();
+  updateSaveVoiceEnabled();
 
   if (isHomeAssistantIngress()) {
     els.serverUrl.disabled = true;

@@ -161,6 +161,7 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       };
 
       const result = await new Promise((resolve, reject) => {
+        let settled = false;
         const ws = new WebSocket(wsUrl);
         const timeout = setTimeout(() => {
           try {
@@ -168,15 +169,29 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
           } catch {
             // ignore
           }
+          if (settled) return;
+          settled = true;
           reject(new Error("Timed out waiting for voice_saved."));
         }, 120000);
+
+        function finish(err, value) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+          if (err) reject(err);
+          else resolve(value);
+        }
 
         ws.addEventListener("open", () => {
           try {
             ws.send(JSON.stringify(payload));
           } catch (e) {
-            clearTimeout(timeout);
-            reject(e);
+            finish(e);
           }
         });
 
@@ -190,35 +205,31 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
           if (!msg || typeof msg !== "object") return;
 
           if (msg.type === "voice_saved") {
-            clearTimeout(timeout);
-            try {
-              ws.close();
-            } catch {
-              // ignore
-            }
-            resolve(msg.data || {});
+            finish(null, msg.data || {});
             return;
           }
 
           if (msg.type === "error") {
-            clearTimeout(timeout);
-            try {
-              ws.close();
-            } catch {
-              // ignore
-            }
-            reject(new Error(String(msg.data || "Voice save failed.")));
+            const data = msg.data;
+            const message =
+              data && typeof data === "object" && typeof data.message === "string"
+                ? data.message
+                : typeof data === "string"
+                  ? data
+                  : "Voice save failed.";
+            finish(new Error(message));
           }
         });
 
         ws.addEventListener("error", () => {
-          clearTimeout(timeout);
-          reject(new Error("WebSocket error."));
+          finish(new Error("WebSocket error."));
         });
 
         ws.addEventListener("close", () => {
-          // If it closes before we resolve/reject, treat as failure.
-          // (No-op if already resolved/rejected.)
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          reject(new Error("WebSocket closed before voice_saved."));
         });
       });
 
