@@ -4,8 +4,6 @@ import {
   renderVoices,
   setLatency,
   setOnline,
-  setPercent,
-  setQueue,
   setVoiceCount,
   toast,
 } from "./ui.js";
@@ -34,11 +32,8 @@ const els = {
   savingVoice: $("#savingVoice"),
   voicesList: $("#voicesList"),
 
-  cpuValue: $("#cpuValue"),
-  cpuBar: $("#cpuBar"),
-  ramValue: $("#ramValue"),
-  ramBar: $("#ramBar"),
-  queueValue: $("#queueValue"),
+  wsState: $("#wsState"),
+  wsLogs: $("#wsLogs"),
 
   serverUrl: $("#serverUrl"),
   saveUrlBtn: $("#saveUrlBtn"),
@@ -54,6 +49,105 @@ let state = {
   isBusy: false,
   voices: [],
 };
+
+let wsLog = {
+  api: null,
+  unsub: null,
+  lines: [],
+  maxLines: 220,
+};
+
+function fmtTime(ts) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function safeStringify(obj) {
+  try {
+    return JSON.stringify(obj);
+  } catch {
+    return String(obj);
+  }
+}
+
+function appendWsLog(line) {
+  const l = String(line || "").trimEnd();
+  if (!l) return;
+
+  const el = els.wsLogs;
+  const shouldStick = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+
+  wsLog.lines.push(l);
+  if (wsLog.lines.length > wsLog.maxLines) {
+    wsLog.lines.splice(0, wsLog.lines.length - wsLog.maxLines);
+  }
+
+  el.textContent = wsLog.lines.join("\n");
+  if (shouldStick) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function setWsStateText(text) {
+  els.wsState.textContent = text;
+}
+
+function onWsEvent(ev) {
+  if (!ev || typeof ev !== "object") return;
+  const at = typeof ev.at === "number" ? ev.at : Date.now();
+  const t = fmtTime(at);
+
+  if (ev.kind === "state") {
+    if (ev.state === "open") setWsStateText("Connected");
+    else if (ev.state === "closed") setWsStateText("Disconnected");
+    else if (ev.state === "error") setWsStateText("Error");
+
+    const extra = [];
+    if (typeof ev.code === "number") extra.push(`code=${ev.code}`);
+    if (typeof ev.reason === "string" && ev.reason) extra.push(`reason=${ev.reason}`);
+    appendWsLog(`${t} [ws] ${ev.state}${extra.length ? ` (${extra.join(", ")})` : ""}`);
+    return;
+  }
+
+  if (ev.kind === "message") {
+    const dir = ev.direction === "out" ? "->" : "<-";
+    const msg = ev.msg;
+    if (msg && typeof msg === "object") {
+      const type = typeof msg.type === "string" ? msg.type : "(no type)";
+      appendWsLog(`${t} ${dir} ${type} ${safeStringify(msg.data ?? msg)}`);
+    } else if (ev.raw) {
+      appendWsLog(`${t} ${dir} ${String(ev.raw)}`);
+    }
+  }
+}
+
+function attachWsLogging() {
+  const api = createApiForCurrentContext();
+  if (wsLog.api === api) return;
+
+  if (wsLog.unsub) {
+    try {
+      wsLog.unsub();
+    } catch {
+      // ignore
+    }
+  }
+  wsLog.api = api;
+  wsLog.unsub = typeof api?.onWs === "function" ? api.onWs(onWsEvent) : null;
+
+  // Try to connect eagerly so logs show connection lifecycle.
+  if (typeof api?.wsConnect === "function") {
+    api.wsConnect().catch((e) => {
+      setWsStateText("Disconnected");
+      const msg = e?.message ? String(e.message) : "WebSocket connect failed.";
+      appendWsLog(`${fmtTime(Date.now())} [ws] connect_failed (${msg})`);
+    });
+  }
+}
 
 function computeReferenceReady() {
   const file = els.referenceFile.files && els.referenceFile.files[0];
@@ -160,6 +254,8 @@ function setVoices(raw) {
 async function refresh() {
   resetAudio();
 
+  attachWsLogging();
+
   const api = createApiForCurrentContext();
 
   setBusy(true);
@@ -172,11 +268,6 @@ async function refresh() {
 
     online = Boolean(healthRes && healthRes.status === "ok");
     latencyMs = performance.now() - start;
-
-    // The backend health endpoint does not expose CPU/RAM/queue metrics.
-    setPercent(els.cpuValue, els.cpuBar, NaN);
-    setPercent(els.ramValue, els.ramBar, NaN);
-    setQueue(els.queueValue, null);
 
     try {
       const voicesRes = await api.voices();
@@ -199,9 +290,6 @@ async function refresh() {
     setOnline(els.statusDot, els.statusText, false);
     setLatency(els.latency, NaN);
     updateReferenceMeta();
-    setPercent(els.cpuValue, els.cpuBar, NaN);
-    setPercent(els.ramValue, els.ramBar, NaN);
-    setQueue(els.queueValue, null);
     setVoiceCount(els.voiceCount, NaN);
     renderVoices(null, els.voicesList, []);
 
@@ -394,6 +482,9 @@ function init() {
   updateReferenceMeta();
   updateSaveVoiceEnabled();
 
+  setWsStateText("Disconnected");
+  appendWsLog(`${fmtTime(Date.now())} [ui] ready`);
+
   if (isHomeAssistantIngress()) {
     els.serverUrl.disabled = true;
     els.saveUrlBtn.disabled = true;
@@ -405,6 +496,8 @@ function init() {
     }
   }
 
+  // Start WS logging immediately; refresh handles fetching /health and voices.
+  attachWsLogging();
   if (saved) refresh();
 }
 

@@ -66,33 +66,18 @@
           </div>
         </section>
 
-        <section class="card" aria-labelledby="snapshotTitle">
+        <section class="card" aria-labelledby="logsTitle">
           <div class="card__header">
-            <h2 class="card__title" id="snapshotTitle">Server Snapshot</h2>
+            <h2 class="card__title" id="logsTitle">WebSocket Logs</h2>
           </div>
           <div class="card__body">
-            <div class="metric">
-              <div class="metric__top">
-                <div class="metric__label">CPU</div>
-                <div class="metric__value" id="cpuValue">—</div>
-              </div>
-              <div class="bar"><div class="bar__fill" id="cpuBar"></div></div>
+            <div class="logmeta">
+              <div class="logmeta__label">Status</div>
+              <div class="logmeta__value" id="wsState">Disconnected</div>
             </div>
 
-            <div class="metric">
-              <div class="metric__top">
-                <div class="metric__label">RAM</div>
-                <div class="metric__value" id="ramValue">—</div>
-              </div>
-              <div class="bar"><div class="bar__fill" id="ramBar"></div></div>
-            </div>
-
-            <div class="metric metric--single">
-              <div class="metric__top">
-                <div class="metric__label">Queue Size</div>
-                <div class="metric__value" id="queueValue">—</div>
-              </div>
-            </div>
+            <pre class="log" id="wsLogs" aria-label="WebSocket logs"></pre>
+            <div class="hint">Shows messages sent/received over <code>WS /ws</code>.</div>
           </div>
         </section>
 

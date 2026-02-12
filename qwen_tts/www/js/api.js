@@ -80,6 +80,18 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const wsPending = new Map();
   /** @type {Map<string, Array<Function>>} */
   const wsTypeListeners = new Map();
+  /** @type {Set<Function>} */
+  const wsAnyListeners = new Set();
+
+  function wsNotify(ev) {
+    for (const fn of wsAnyListeners) {
+      try {
+        fn(ev);
+      } catch {
+        // ignore listener errors
+      }
+    }
+  }
 
   function proxyJoin(path) {
     const p = String(path || "").replace(/^\/+/, "");
@@ -123,7 +135,10 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
       // Keep-alive message. The backend may ignore unknown types; that's fine.
       // Prefer sending an object to keep it JSON.
       try {
-        ws.send(JSON.stringify({ type: "ping", data: { t: Date.now() } }));
+        const payload = { type: "ping", data: { t: Date.now() } };
+        const raw = JSON.stringify(payload);
+        wsNotify({ kind: "message", direction: "out", at: Date.now(), raw, msg: payload });
+        ws.send(raw);
       } catch {
         // ignore; close handler will reconnect if needed.
       }
@@ -177,13 +192,18 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     wsLastMessageAt = Date.now();
     wsArmIdleWatchdog();
 
+    const raw = ev?.data;
+
     let msg;
     try {
-      msg = JSON.parse(String(ev.data || ""));
+      msg = JSON.parse(String(raw || ""));
     } catch {
+      wsNotify({ kind: "message", direction: "in", at: Date.now(), raw, msg: null });
       return;
     }
     if (!msg || typeof msg !== "object") return;
+
+    wsNotify({ kind: "message", direction: "in", at: Date.now(), raw, msg });
 
     // NOTE: qwen3-server currently does NOT use request_id correlation.
     // Keep this path for forward compatibility in case it gets added later.
@@ -269,6 +289,7 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
         ws.addEventListener("message", wsOnMessage);
         wsArmPing();
         wsArmIdleWatchdog();
+        wsNotify({ kind: "state", state: "open", at: Date.now(), url: wsUrl });
         resolve(ws);
       });
 
@@ -276,11 +297,22 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
         if (settled) return;
         settled = true;
         clearTimeout(connectTimeout);
+        wsNotify({ kind: "state", state: "error", at: Date.now(), url: wsUrl });
         reject(new Error("WebSocket error."));
       });
 
-      sock.addEventListener("close", () => {
+      sock.addEventListener("close", (closeEv) => {
         clearTimeout(connectTimeout);
+
+        wsNotify({
+          kind: "state",
+          state: "closed",
+          at: Date.now(),
+          code: closeEv?.code,
+          reason: closeEv?.reason,
+          wasClean: closeEv?.wasClean,
+          url: wsUrl,
+        });
 
         // If we were currently connected, this is a disconnect; otherwise it's a failed connect.
         const wasActive = ws === sock;
@@ -386,7 +418,9 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 
       try {
         const sock = await ensureWebSocket();
-        sock.send(JSON.stringify(payload));
+        const raw = JSON.stringify(payload);
+        wsNotify({ kind: "message", direction: "out", at: Date.now(), raw, msg: payload });
+        sock.send(raw);
       } catch (e) {
         cleanup();
         reject(e);
@@ -396,6 +430,16 @@ export function createApi(baseUrl, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 
   return {
     baseUrl: base,
+
+    onWs(listener) {
+      if (typeof listener !== "function") return () => {};
+      wsAnyListeners.add(listener);
+      return () => wsAnyListeners.delete(listener);
+    },
+
+    async wsConnect() {
+      return ensureWebSocket();
+    },
 
     async health() {
       const res = await request("/health");
